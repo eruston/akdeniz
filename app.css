@@ -1,0 +1,156 @@
+:root{
+  --bg:#F4F2EE; --card:#FFFFFF; --ink:#1B1F1E; --muted:#6B716F; --line:#E4E0D8;
+  --brand:#0E6B5C; --brand-ink:#FFFFFF; --soon:#C2410C; --live:#16A34A; --star:#E0A100;
+}
+@media (prefers-color-scheme:dark){
+  :root:not(.light){ --bg:#121514; --card:#1C2120; --ink:#ECEFEE; --muted:#9AA3A0; --line:#2A302E;
+    --brand:#0E6B5C; --soon:#FB923C; --live:#4ADE80; --star:#F5C542; }
+}
+:root.dark{ --bg:#121514; --card:#1C2120; --ink:#ECEFEE; --muted:#9AA3A0; --line:#2A302E;
+  --brand:#0E6B5C; --soon:#FB923C; --live:#4ADE80; --star:#F5C542; color-scheme:dark; }
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html,body{margin:0;height:100%;background:var(--bg);color:var(--ink);
+  font-family:system-ui,-apple-system,"Roboto","Segoe UI",sans-serif;font-size:16px}
+button{font:inherit;color:inherit;border:0;background:none;padding:0;cursor:pointer}
+[hidden]{display:none!important}
+.screen{min-height:100%;display:flex;flex-direction:column}
+
+.top{background:var(--brand);color:var(--brand-ink);padding:18px 16px 12px}
+.top-row{display:flex;align-items:flex-start;gap:12px}
+.where{flex:1;min-width:0}
+.eyebrow{font-size:12px;letter-spacing:.08em;text-transform:uppercase;opacity:.75}
+h1{margin:4px 0 2px;font-size:24px;line-height:1.2;font-weight:700;word-wrap:break-word}
+.top .meta{font-size:14px;opacity:.85}
+.icon-btn{width:42px;height:42px;border-radius:50%;display:grid;place-items:center;flex:none}
+.top .icon-btn{background:rgba(255,255,255,.14)}
+.icon-btn.spin svg{animation:spin 1s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+
+.chips{display:flex;gap:8px;overflow-x:auto;margin:12px -16px 0;padding:0 16px 2px;scrollbar-width:none}
+.chips::-webkit-scrollbar{display:none}
+.chip{flex:none;font-size:13px;padding:7px 12px;border-radius:999px;background:rgba(255,255,255,.14);white-space:nowrap}
+.chip.on{background:#fff;color:var(--brand);font-weight:600}
+
+.toolbar{display:flex;align-items:center;gap:6px;padding:12px 16px 4px}
+.seg{font-size:13px;padding:6px 12px;border-radius:999px;border:1px solid var(--line);color:var(--muted)}
+.seg.on{background:var(--ink);color:var(--bg);border-color:var(--ink)}
+.updated{margin-left:auto;font-size:12px;color:var(--muted);font-variant-numeric:tabular-nums}
+
+.list{padding:6px 12px 24px;display:flex;flex-direction:column;gap:8px}
+.row{display:flex;align-items:center;gap:12px;background:var(--card);border-radius:14px;padding:12px;
+  border:1px solid var(--line);text-align:left;width:100%}
+.row:active{transform:scale(.99)}
+.badge{flex:none;min-width:58px;height:40px;padding:0 8px;border-radius:10px;display:grid;place-items:center;
+  font-weight:800;font-size:15px;background:var(--brand);color:#fff;letter-spacing:.02em}
+.badge.big{min-width:64px;height:40px}
+.mid{flex:1;min-width:0}
+.dest{font-size:15px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.sub{font-size:13px;color:var(--muted);margin-top:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.sub .live{color:var(--live);font-weight:600}
+.arr{flex:none;display:flex;flex-direction:column;align-items:flex-end;gap:3px;min-width:64px;text-align:right;font-variant-numeric:tabular-nums}
+.arr-lead{display:flex;align-items:baseline;gap:3px;line-height:1}
+.arr-lead b{font-size:28px;font-weight:800;letter-spacing:-.02em}
+.arr-lead b.small{font-size:20px}
+.arr-lead b.soon,.arr-lead b.now{color:var(--soon)}
+.arr-lead b.now{font-size:20px}
+.arr-lead .unit{font-size:13px;font-weight:600;color:var(--muted)}
+.arr-lead.live b,.arr-lead.live .unit{color:var(--live)}
+.arr-lead.live b.soon,.arr-lead.live b.now{color:var(--soon)}
+.arr-lead.sched b{color:var(--ink)}
+.arr-more{font-size:12px;font-weight:600;white-space:nowrap}
+.arr-more .live{color:var(--live)}
+.arr-more .sched{color:var(--muted)}
+.arr-more .dot{color:var(--muted);margin:0 4px;font-weight:400}
+.arr-none{font-size:20px;color:var(--muted);font-weight:700}
+.sigwrap{align-self:flex-start;margin-right:1px;color:var(--live);line-height:0}
+.sig{fill:currentColor;stroke:currentColor}
+.sig .a1{animation:sig 1.6s ease-in-out infinite}
+.sig .a2{animation:sig 1.6s ease-in-out .3s infinite}
+@keyframes sig{0%,100%{opacity:.25}50%{opacity:1}}
+.star{flex:none;width:34px;height:34px;display:grid;place-items:center;color:var(--line);font-size:22px;margin-right:-4px}
+.star.on{color:var(--star)}
+.pulse{display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--live);margin-right:5px;
+  vertical-align:1px;animation:pulse 1.6s ease-out infinite}
+@keyframes pulse{0%{box-shadow:0 0 0 0 rgba(22,163,74,.5)}100%{box-shadow:0 0 0 7px rgba(22,163,74,0)}}
+
+.state{margin:40px 20px;text-align:center;color:var(--muted);line-height:1.5}
+.state h2{color:var(--ink);font-size:18px;margin:0 0 6px}
+.btn{display:inline-block;margin-top:14px;background:var(--brand);color:#fff;padding:11px 18px;border-radius:12px;font-weight:600}
+.btn.ghost{background:none;color:var(--brand);border:1px solid var(--line);margin-left:6px}
+.skel{height:66px;border-radius:14px;background:linear-gradient(90deg,var(--card),var(--line),var(--card));
+  background-size:200% 100%;animation:sh 1.2s infinite}
+@keyframes sh{to{background-position:-200% 0}}
+.section{font-size:12px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);margin:10px 4px 2px}
+
+/* map */
+#mapScreen{height:100%}
+.map-top{display:flex;align-items:center;gap:10px;padding:10px 12px;background:var(--card);border-bottom:1px solid var(--line);z-index:5}
+.map-title{flex:1;min-width:0}
+#mapDest{font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.map-top .meta{font-size:13px;color:var(--muted)}
+#map{flex:1;min-height:200px;background:var(--line)}
+.leaflet-container.map-dark{background:#1B1E20}
+.leaflet-container.map-light{background:#F2F1EE}
+.leaflet-container.raster.map-light .leaflet-tile-pane{filter:grayscale(1) contrast(.85) brightness(1.06)}
+.leaflet-container.raster.map-dark .leaflet-tile-pane{filter:grayscale(1) invert(1) brightness(.78) contrast(.8)}
+.leaflet-container.map-dark .leaflet-control-attribution{background:rgba(0,0,0,.55);color:#999}
+.leaflet-container.map-dark .leaflet-control-attribution a{color:#bbb}
+.map-card{background:var(--card);border-top:1px solid var(--line);padding:12px 16px calc(14px + env(safe-area-inset-bottom));
+  display:flex;align-items:center;gap:14px}
+.map-card .big{white-space:nowrap;flex:none;font-size:30px;font-weight:800;font-variant-numeric:tabular-nums}
+.map-card .txt{font-size:14px;color:var(--muted);line-height:1.4}
+.bus-ico{background:none;border:0}
+.bus-pin{transform:translate(-50%,-50%);display:inline-flex;align-items:center;gap:3px;padding:3px 7px;border-radius:9px;
+  color:#fff;font:800 12px system-ui,sans-serif;white-space:nowrap;border:2px solid #fff;box-shadow:0 1px 4px rgba(0,0,0,.35)}
+.bus-pin.next{outline:3px solid var(--soon)}
+.map-dark .leaflet-tooltip{background:#1C2120;color:#ECEFEE;border-color:#2A302E}
+.map-dark .leaflet-tooltip-top:before{border-top-color:#1C2120}
+.leaflet-container{font:inherit}
+/* vektör harita katmanı Leaflet alanının içinde kalsın */
+.leaflet-gl-layer.maplibregl-map{position:absolute}
+.map-top,.map-card{position:relative;z-index:1000}
+#map{position:relative;overflow:hidden}
+
+.updated.warn{color:var(--soon)}
+.stale{background:var(--card);border:1px solid var(--soon);border-radius:14px;padding:12px 14px;font-size:14px;line-height:1.45;color:var(--muted)}
+.stale b{display:block;color:var(--soon);font-size:15px;margin-bottom:2px}
+.seg{white-space:nowrap;flex:none}
+.updated{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
+
+/* ---------- sekme çubuğu ---------- */
+:root{--tabbar:62px}
+.tabbar{position:fixed;left:0;right:0;bottom:0;height:calc(var(--tabbar) + env(safe-area-inset-bottom));padding-bottom:env(safe-area-inset-bottom);
+  display:flex;background:var(--card);border-top:1px solid var(--line);z-index:2000}
+.tab{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;font-size:12px;font-weight:600;color:var(--muted)}
+.tab.on{color:var(--brand)}
+:root.dark .tab.on{color:#4FD1B5}
+#home{padding-bottom:calc(var(--tabbar) + env(safe-area-inset-bottom))}
+
+/* ---------- Duraklar haritası ---------- */
+#stopsScreen{position:fixed;left:0;right:0;top:0;bottom:calc(var(--tabbar) + env(safe-area-inset-bottom));min-height:0}
+#stopsMap{position:absolute;inset:0}
+.fab{position:absolute;top:16px;right:16px;width:48px;height:48px;border-radius:50%;display:grid;place-items:center;
+  background:var(--card);color:var(--ink);box-shadow:0 2px 8px rgba(0,0,0,.25);z-index:1000}
+.hint{position:absolute;left:50%;bottom:18px;transform:translateX(-50%);z-index:1000;white-space:nowrap;
+  background:var(--card);color:var(--ink);font-size:14px;font-weight:600;padding:11px 18px;border-radius:999px;box-shadow:0 2px 10px rgba(0,0,0,.25)}
+.stop-ico{background:none;border:0;display:grid;place-items:center}
+.stop-pin{width:20px;height:20px;border-radius:6px;display:grid;place-items:center;background:#1E6FD9;color:#fff;
+  border:1.5px solid #fff;box-shadow:0 1px 3px rgba(0,0,0,.35)}
+.stop-pin.sel{transform:scale(1.35);background:var(--soon)}
+.sheet{position:absolute;left:0;right:0;bottom:0;max-height:62%;overflow-y:auto;z-index:1500;background:var(--bg);
+  border-radius:20px 20px 0 0;box-shadow:0 -4px 18px rgba(0,0,0,.3);padding:6px 0 12px}
+.grip{width:40px;height:4px;border-radius:2px;background:var(--line);margin:4px auto 6px}
+.sheet-head{display:flex;align-items:flex-start;gap:8px;padding:4px 12px 4px 16px}
+.sheet-title{flex:1;min-width:0}
+#sheetName{font-size:19px;font-weight:700;line-height:1.25}
+.sheet-head .meta{font-size:13px;color:var(--muted);margin-top:2px}
+.sheet-head .icon-btn{color:var(--muted)}
+.sheet-list{padding-top:6px;padding-bottom:6px}
+.sheet-empty{color:var(--muted);font-size:14px;padding:8px 4px}
+.sheet-empty.warn{color:var(--soon)}
+.btn.wide{display:block;width:calc(100% - 24px);margin:4px 12px 0;text-align:center}
+
+/* iPhone çentik / alt çizgi boşlukları (Android'de env() değerleri 0'dır, etkisi olmaz) */
+.top{padding-top:calc(18px + env(safe-area-inset-top))}
+.map-top{padding-top:calc(10px + env(safe-area-inset-top))}
+.fab{top:calc(16px + env(safe-area-inset-top))}

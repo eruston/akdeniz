@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="tr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<meta name="theme-color" content="#0E6B5C">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Akdeniz">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="description" content="Antalya otobüs durakları: en yakın durak, varış dakikaları, canlı otobüs konumu.">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<link rel="icon" type="image/png" sizes="192x192" href="icon-192.png">
+
+<title>Akdeniz</title>
+<link rel="stylesheet" href="leaflet.css">
+<link rel="stylesheet" href="maplibre-gl.css">
+<link rel="stylesheet" href="app.css">
+</head>
+<body>
+<div id="home" class="screen">
+  <header class="top">
+    <div class="top-row">
+      <div class="where">
+        <div class="eyebrow" id="eyebrow">En yakın durak</div>
+        <h1 id="stopName">Konumun bulunuyor…</h1>
+        <div class="meta" id="stopMeta"></div>
+      </div>
+      <button class="icon-btn" id="refreshBtn" aria-label="Yenile">
+        <svg viewBox="0 0 24 24" width="22" height="22"><path fill="currentColor" d="M12 5V2L7 6l5 4V7a5 5 0 1 1-5 5H5a7 7 0 1 0 7-7z"/></svg>
+      </button>
+    </div>
+    <div class="chips" id="stopChips"></div>
+  </header>
+
+  <div class="toolbar" id="toolbar" hidden>
+    <button class="seg on" data-f="all">Tüm hatlar</button>
+    <button class="seg" data-f="fav">★ Takip ettiklerim</button>
+    <span class="updated" id="updated"></span>
+  </div>
+
+  <main id="list" class="list"></main>
+</div>
+
+<div id="stopsScreen" class="screen" hidden>
+  <div id="stopsMap"></div>
+  <button class="fab" id="locBtn" aria-label="Konumuma git">
+    <svg viewBox="0 0 24 24" width="24" height="24"><path fill="currentColor" d="M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8zm9 3h-2.07A7 7 0 0 0 13 5.07V3h-2v2.07A7 7 0 0 0 5.07 11H3v2h2.07A7 7 0 0 0 11 18.93V21h2v-2.07A7 7 0 0 0 18.93 13H21v-2zm-9 6a5 5 0 1 1 0-10 5 5 0 0 1 0 10z"/></svg>
+  </button>
+  <div class="hint" id="stopsHint">Duraklar yükleniyor…</div>
+  <div class="sheet" id="stopSheet" hidden>
+    <div class="grip"></div>
+    <div class="sheet-head">
+      <div class="sheet-title">
+        <div id="sheetName">–</div>
+        <div class="meta" id="sheetMeta"></div>
+      </div>
+      <button class="icon-btn" id="sheetClose" aria-label="Kapat">
+        <svg viewBox="0 0 24 24" width="22" height="22"><path fill="currentColor" d="M18.3 5.7 12 12l6.3 6.3-1.4 1.4L10.6 13.4 4.3 19.7l-1.4-1.4L9.2 12 2.9 5.7l1.4-1.4 6.3 6.3 6.3-6.3z"/></svg>
+      </button>
+    </div>
+    <div id="sheetList" class="list sheet-list"></div>
+    <button class="btn wide" id="sheetAll" hidden>Tüm hatlar</button>
+  </div>
+</div>
+
+<nav class="tabbar" id="tabbar">
+  <button class="tab on" data-tab="home">
+    <svg viewBox="0 0 24 24" width="24" height="24"><path fill="currentColor" d="M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20zm0 18a8 8 0 1 1 0-16 8 8 0 0 1 0 16zm1-13h-2v6l5 3 1-1.7-4-2.4z"/></svg>
+    <span>Varışlar</span>
+  </button>
+  <button class="tab" data-tab="stops">
+    <svg viewBox="0 0 24 24" width="24" height="24"><path fill="currentColor" d="M12 2a7 7 0 0 0-7 7c0 5.2 7 13 7 13s7-7.8 7-13a7 7 0 0 0-7-7zm0 9.5A2.5 2.5 0 1 1 12 6.5a2.5 2.5 0 0 1 0 5z"/></svg>
+    <span>Duraklar</span>
+  </button>
+</nav>
+
+<div id="mapScreen" class="screen" hidden>
+  <header class="map-top">
+    <button class="icon-btn back" id="backBtn" aria-label="Geri">
+      <svg viewBox="0 0 24 24" width="24" height="24"><path fill="currentColor" d="M15.4 7.4 14 6l-6 6 6 6 1.4-1.4L10.8 12z"/></svg>
+    </button>
+    <div class="badge big" id="mapBadge">–</div>
+    <div class="map-title">
+      <div id="mapDest">–</div>
+      <div class="meta" id="mapMeta">Canlı konum yükleniyor…</div>
+    </div>
+  </header>
+  <div id="map"></div>
+  <div class="map-card" id="mapCard"></div>
+</div>
+
+<script src="leaflet.js"></script>
+<script src="maplibre-gl.js"></script>
+<script src="leaflet-maplibre-gl.js"></script>
+<script src="config.js"></script>
+<script src="app.js"></script>
+<script src="web.js"></script>
+</body>
+</html>

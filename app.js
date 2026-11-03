@@ -13,8 +13,20 @@ var pending = {}, reqSeq = 0;
 window.__res = function (id, ok, body) {
   var p = pending[id]; if (!p) return; delete pending[id];
   if (!ok) return p.reject(new Error(body || 'Bağlantı hatası'));
-  try { p.resolve(JSON.parse(body)); } catch (e) { p.reject(new Error('Geçersiz yanıt')); }
+  var j;
+  try { j = JSON.parse(body); } catch (e) { return p.reject(new Error('Geçersiz yanıt')); }
+  checkResult(j, p.resolve, p.reject);
 };
+/* Kentkart her cevapta result.code/message gönderir. Hiç veri listesi yokken sıfırdan farklı bir kod
+   gelirse bu "boş sonuç" değil, sunucu hatasıdır (ör. yoğunluk/engelleme): hata olarak göster. */
+function checkResult(j, resolve, reject) {
+  var r = j && j.result, code = r ? parseInt(r.code, 10) : 0;
+  var hasData = j && ['stopList', 'routeList', 'busList', 'pathList', 'placeList'].some(function (k) { return j[k] && j[k].length; });
+  if (r && isFinite(code) && code !== 0 && !hasData) {
+    return reject(new Error('Kentkart: ' + (r.message || ('kod ' + code))));
+  }
+  resolve(j);
+}
 function qs(o) {
   var a = [], k;
   for (k in BASE_QS) a.push(k + '=' + encodeURIComponent(BASE_QS[k]));
@@ -23,7 +35,8 @@ function qs(o) {
 }
 function api(path, params) {
   var url = API + path + '?' + qs(params || {});
-  if (!hasBridge) return fetch(url).then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); });
+  if (!hasBridge) return fetch(url).then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+    .then(function (j) { return new Promise(function (res, rej) { checkResult(j, res, rej); }); });
   return new Promise(function (resolve, reject) {
     var id = 'r' + (++reqSeq);
     pending[id] = { resolve: resolve, reject: reject };
@@ -100,9 +113,19 @@ function locate() {
       function (e) { window.__locErr(e.code === 1 ? 'perm' : 'fail'); }, { enableHighAccuracy: true, timeout: 20000, maximumAge: 30000 });
   } else window.__locErr('fail');
 }
+var COARSE_M = 300;
 window.__loc = function (lat, lng, acc, age, final) {
   var prev = S.pos;
   S.locBlocked = false;
+  // Kaba konum (±300 m'den kötü) geldiyse ve daha iyisi bekleniyorsa durak aramayı ertele
+  if (!final && acc > COARSE_M) {
+    if (!S.stops.length) {
+      $('stopName').textContent = 'Konum netleşiyor…';
+      $('stopMeta').textContent = 'Şu anki hassasiyet ±' + fmtDist(acc) + ' · GPS bekleniyor';
+    }
+    if (!prev || prev.acc > acc) { S.pos = { lat: lat, lng: lng, acc: acc, t: Date.now() }; if (SM.map) updateStopsMe(); }
+    return;
+  }
   S.pos = { lat: lat, lng: lng, acc: acc, t: Date.now() };
   if (S.mapLine && S.map) updateUserDot();
   if (SM.map) updateStopsMe();
@@ -389,6 +412,7 @@ function renderHeader() {
   var meta = [];
   if (isFinite(s.d)) meta.push(fmtDist(s.d) + ' uzakta');
   if (s.id) meta.push('Durak no ' + s.id);
+  if (S.pos && S.pos.acc > COARSE_M) meta.push('konum ±' + fmtDist(S.pos.acc));
   $('stopMeta').textContent = meta.join(' · ');
   var C = $('stopChips'); C.innerHTML = '';
   S.stops.forEach(function (x) {
@@ -730,23 +754,36 @@ function fetchCells() {
   var b = SM.map.getBounds().pad(0.15), c = SM.map.getCenter();
   var la0 = Math.floor(b.getSouth() / CELL_LAT), la1 = Math.floor(b.getNorth() / CELL_LAT);
   var lo0 = Math.floor(b.getWest() / CELL_LNG), lo1 = Math.floor(b.getEast() / CELL_LNG);
+  if (SM.queue) SM.queue.forEach(function (t) { if (SM.cells[t.k] === 'queued') delete SM.cells[t.k]; });
   var todo = [];
   for (var i = la0; i <= la1; i++) for (var j = lo0; j <= lo1; j++) {
     var k = i + ':' + j, cell = SM.cells[k];
-    if (cell === 'loading' || (cell && Date.now() - cell < 10 * 60000)) continue;
+    if (cell === 'loading' || (typeof cell === 'number' && Date.now() - cell < 10 * 60000)) continue;
     todo.push({ k: k, lat: (i + 0.5) * CELL_LAT, lng: (j + 0.5) * CELL_LNG });
   }
   todo.sort(function (x, y) { return dist(c.lat, c.lng, x.lat, x.lng) - dist(c.lat, c.lng, y.lat, y.lng); });
-  todo.slice(0, 16).forEach(function (t) {
-    SM.cells[t.k] = 'loading'; SM.pending++;
-    api('nearest/place', { lat: t.lat.toFixed(6), lng: t.lng.toFixed(6) }).then(function (r) {
-      addNear((r.stopList || []).map(mapStop));
-      SM.cells[t.k] = Date.now();
-    }, function () { delete SM.cells[t.k]; }).then(function () {
-      SM.pending--;
-      clearTimeout(SM.drawT); SM.drawT = setTimeout(function () { drawStops(true); }, 120);
-    });
-  });
+  SM.queue = todo.slice(0, 9);
+  SM.queue.forEach(function (t) { SM.cells[t.k] = 'queued'; });
+  pumpCells();
+}
+// Kentkart'ı yormamak için aynı anda en fazla 2 bölge sorgusu
+var cellActive = 0;
+function pumpCells() {
+  while (cellActive < 2 && SM.queue && SM.queue.length) {
+    var t = SM.queue.shift();
+    if (SM.cells[t.k] !== 'queued') continue;
+    (function (t) {
+      SM.cells[t.k] = 'loading'; SM.pending++; cellActive++;
+      api('nearest/place', { lat: t.lat.toFixed(6), lng: t.lng.toFixed(6) }).then(function (r) {
+        addNear((r.stopList || []).map(mapStop));
+        SM.cells[t.k] = Date.now();
+      }, function () { delete SM.cells[t.k]; }).then(function () {
+        SM.pending--; cellActive--;
+        clearTimeout(SM.drawT); SM.drawT = setTimeout(function () { drawStops(true); }, 120);
+        pumpCells();
+      });
+    })(t);
+  }
 }
 function drawStops(noFetch) {
   if (!SM.map || S.tab !== 'stops') return;
@@ -778,6 +815,9 @@ function drawStops(noFetch) {
 function updateStopsMe() {
   if (!SM.map || !S.pos) return;
   var ll = [S.pos.lat, S.pos.lng];
+  var r = Math.max(10, S.pos.acc || 0);
+  if (SM.acc) SM.acc.setLatLng(ll).setRadius(r);
+  else SM.acc = L.circle(ll, { radius: r, stroke: false, fillColor: '#2563EB', fillOpacity: 0.12, interactive: false }).addTo(SM.map);
   if (SM.me) SM.me.setLatLng(ll);
   else SM.me = L.circleMarker(ll, { radius: 7, color: '#fff', weight: 3, fillColor: '#2563EB', fillOpacity: 1, interactive: false }).addTo(SM.map);
 }

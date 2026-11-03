@@ -14,7 +14,8 @@ window.__res = function (id, ok, body) {
   var p = pending[id]; if (!p) return; delete pending[id];
   if (!ok) return p.reject(new Error(body || 'Bağlantı hatası'));
   var j;
-  try { j = JSON.parse(body); } catch (e) { return p.reject(new Error('Geçersiz yanıt')); }
+  try { j = JSON.parse(body); } catch (e) { var er = new Error('Geçersiz yanıt'); er.raw = body; return p.reject(er); }
+  if (j && typeof j === 'object') j.__raw = body;
   checkResult(j, p.resolve, p.reject);
 };
 /* Kentkart her cevapta result.code/message gönderir. Hiç veri listesi yokken sıfırdan farklı bir kod
@@ -23,7 +24,8 @@ function checkResult(j, resolve, reject) {
   var r = j && j.result, code = r ? parseInt(r.code, 10) : 0;
   var hasData = j && ['stopList', 'routeList', 'busList', 'pathList', 'placeList'].some(function (k) { return j[k] && j[k].length; });
   if (r && isFinite(code) && code !== 0 && !hasData) {
-    return reject(new Error('Kentkart: ' + (r.message || ('kod ' + code))));
+    var er = new Error('Kentkart: ' + (r.message || ('kod ' + code))); er.raw = j.__raw;
+    return reject(er);
   }
   resolve(j);
 }
@@ -33,9 +35,45 @@ function qs(o) {
   for (k in o) if (o[k] !== undefined && o[k] !== null) a.push(k + '=' + encodeURIComponent(o[k]));
   return a.join('&');
 }
+/* ---------- tanılama günlüğü: son 15 isteğin özeti (yalnızca telefonda, hiçbir yere gönderilmez) ---------- */
+var DIAG = [];
+function diagSummary(j) {
+  if (!j || typeof j !== 'object') return 'JSON değil';
+  var r = j.result || {}, parts = ['code=' + (r.code !== undefined ? r.code : '-')];
+  if (r.message) parts.push('msg="' + String(r.message).slice(0, 80) + '"');
+  ['stopList', 'routeList', 'busList', 'pathList', 'placeList', 'kioskList'].forEach(function (k) {
+    if (j[k]) parts.push(k + '=' + j[k].length);
+  });
+  var keys = Object.keys(j).filter(function (k) { return k !== 'result' && k !== '__raw'; });
+  if (!keys.length) parts.push('(liste yok)');
+  return parts.join(' ');
+}
+function diagLog(path, params, t0, ok, info, raw) {
+  var p = Object.keys(params || {}).map(function (k) { return k + '=' + params[k]; }).join('&');
+  DIAG.unshift({ at: clock(new Date()) + ':' + pad(new Date().getSeconds()), path: path, p: p, ms: Date.now() - t0, ok: ok, info: info,
+    raw: raw ? String(raw).slice(0, 220) : '' });
+  if (DIAG.length > 15) DIAG.length = 15;
+}
 function api(path, params) {
+  var t0 = Date.now();
+  return apiRaw(path, params).then(function (j) {
+    diagLog(path, params, t0, true, diagSummary(j), j && j.__raw);
+    if (j) delete j.__raw;
+    return j;
+  }, function (e) {
+    diagLog(path, params, t0, false, e && e.message, e && e.raw);
+    throw e;
+  });
+}
+function apiRaw(path, params) {
   var url = API + path + '?' + qs(params || {});
-  if (!hasBridge) return fetch(url).then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+  if (!hasBridge) return fetch(url).then(function (r) {
+      return r.text().then(function (t) {
+        if (!r.ok) { var er = new Error('HTTP ' + r.status); er.raw = t; throw er; }
+        var j; try { j = JSON.parse(t); } catch (e) { var e2 = new Error('Geçersiz yanıt'); e2.raw = t; throw e2; }
+        j.__raw = t; return j;
+      });
+    })
     .then(function (j) { return new Promise(function (res, rej) { checkResult(j, res, rej); }); });
   return new Promise(function (resolve, reject) {
     var id = 'r' + (++reqSeq);
@@ -1020,6 +1058,53 @@ window.__resume = function () {
 };
 
 $('refreshBtn').onclick = function () { locate(); if (S.stop) loadArrivals(); };
+/* Tanılama ekranı: yenile düğmesine basılı tut */
+(function () {
+  var t = null, btn = $('refreshBtn');
+  function start() { clearTimeout(t); t = setTimeout(function () { t = 'fired'; openDiag(); }, 700); }
+  function stop(e) { if (t === 'fired') { if (e) e.preventDefault(); } else clearTimeout(t); t = null; }
+  btn.addEventListener('touchstart', start, { passive: true });
+  btn.addEventListener('mousedown', start);
+  ['touchend', 'touchcancel', 'mouseup', 'mouseleave'].forEach(function (ev) { btn.addEventListener(ev, stop); });
+})();
+function diagText() {
+  var lines = ['Akdeniz tanılama · ' + new Date().toLocaleString('tr-TR'),
+    'Sürüm: ' + (hasBridge ? 'Android' : 'web') + ' · API: ' + API,
+    'Konum: ' + (S.pos ? S.pos.lat.toFixed(5) + ',' + S.pos.lng.toFixed(5) + ' ±' + Math.round(S.pos.acc || 0) + ' m' : 'yok'),
+    'Durak: ' + (S.stop ? S.stop.id + ' ' + S.stop.name : 'yok') + ' · hat sayısı ' + S.lines.length + ' · hata: ' + (S.err || '-'),
+    ''];
+  DIAG.forEach(function (d) {
+    lines.push((d.ok ? 'OK  ' : 'HATA') + ' ' + d.at + ' ' + d.path + ' (' + d.ms + ' ms)');
+    lines.push('     ' + d.p);
+    lines.push('     ' + d.info);
+    if (d.raw) lines.push('     ham: ' + d.raw.replace(/\s+/g, ' '));
+  });
+  if (!DIAG.length) lines.push('Henüz istek yok.');
+  return lines.join('\n');
+}
+function openDiag() {
+  var o = $('diag'); o.hidden = false;
+  $('diagText').textContent = diagText();
+}
+$('diagClose').onclick = function () { $('diag').hidden = true; };
+$('diagCopy').onclick = function () {
+  var txt = diagText();
+  if (hasBridge && window.Android.copy) window.Android.copy(txt);
+  else if (navigator.clipboard) navigator.clipboard.writeText(txt).catch(function () {});
+  $('diagCopy').textContent = 'Kopyalandı ✓';
+  setTimeout(function () { $('diagCopy').textContent = 'Kopyala'; }, 1800);
+};
+$('diagTest').onclick = function () {
+  $('diagTest').textContent = 'Test ediliyor…';
+  var c = S.pos || (S.stop ? { lat: S.stop.lat, lng: S.stop.lng } : { lat: 36.8969, lng: 30.6510 });
+  var jobs = [api('nearest/place', { lat: (+c.lat).toFixed(6), lng: (+c.lng).toFixed(6) }),
+              api('nearest/find', { keyword: 'hukuk' })];
+  if (S.stop) jobs.push(api('nearest/bus', { lat: S.stop.lat, lng: S.stop.lng, busStopId: S.stop.id, accuracy: 0 }));
+  Promise.all(jobs.map(function (p) { return p.catch(function () {}); })).then(function () {
+    $('diagTest').textContent = 'Şimdi test et';
+    $('diagText').textContent = diagText();
+  });
+};
 $('backBtn').onclick = closeMap;
 document.querySelectorAll('.tab').forEach(function (b) { b.onclick = function () { if (S.tab !== b.dataset.tab) showTab(b.dataset.tab); }; });
 $('sheetClose').onclick = closeSheet;

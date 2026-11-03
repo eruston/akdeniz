@@ -163,3 +163,5 @@ h1{margin:4px 0 2px;font-size:24px;line-height:1.2;font-weight:700;word-wrap:bre
 .diag-btns .btn{margin:0}
 .diag pre{flex:1;overflow:auto;margin:0;background:var(--card);border:1px solid var(--line);border-radius:12px;padding:10px;
   font:12px/1.45 ui-monospace,Menlo,Consolas,monospace;white-space:pre-wrap;word-break:break-all;color:var(--ink)}
+
+:root.dark .btn.ghost{color:#4FD1B5;border-color:#2A302E}

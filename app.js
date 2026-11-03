@@ -169,6 +169,21 @@ window.__loc = function (lat, lng, acc, age, final) {
   if (SM.map) updateStopsMe();
   if (!prev || dist(prev.lat, prev.lng, lat, lng) > 60 || !S.stops.length) findStops();
 };
+/* Web'de tarayıcı, bir kez reddedilen konum iznini tekrar sormaz; telefon ayarlarını da sayfa açamaz.
+   Bu yüzden web'de nasıl açılacağını yazıyoruz ve konumsuz devam etme seçeneği sunuyoruz. */
+function webLocHelp() {
+  var ua = navigator.userAgent || '';
+  if (/iPhone|iPad|iPod/.test(ua)) {
+    return 'iPhone: Ayarlar → Gizlilik ve Güvenlik → Konum Servisleri → Safari Web Siteleri → "Uygulamayı Kullanırken". ' +
+      'Ana ekrana eklediysen: Ayarlar → Gizlilik ve Güvenlik → Konum Servisleri bölümünde Akdeniz/Safari iznini kontrol et. Sonra sayfayı yenile.';
+  }
+  if (/Android/.test(ua)) {
+    return 'Android (Chrome): adres çubuğundaki kilit/ayar simgesine dokun → İzinler → Konum → İzin ver. ' +
+      'Telefonun konumu da açık olmalı. Sonra sayfayı yenile.';
+  }
+  return 'Tarayıcının adres çubuğundaki kilit simgesinden bu site için konum iznini aç, sonra sayfayı yenile.';
+}
+function continueWithoutLocation() { showTab('stops'); }
 window.__locErr = function (why) {
   S.locBlocked = (why === 'perm' || why === 'off');
   if (S.pos) return; // elimizde konum var, sessiz geç
@@ -180,10 +195,18 @@ window.__locErr = function (why) {
   }[why] || ['Konum alınamadı', '', false];
   $('stopName').textContent = msg[0];
   $('stopMeta').textContent = '';
-  showState(msg[0], msg[1], [
-    { label: why === 'perm' ? 'İzin ver' : 'Tekrar dene', fn: locate },
-    msg[2] ? { label: 'Ayarlar', ghost: true, fn: function () { if (hasBridge) window.Android.openLocationSettings(); } } : null
-  ]);
+  if (hasBridge) {
+    showState(msg[0], msg[1], [
+      { label: why === 'perm' ? 'İzin ver' : 'Tekrar dene', fn: locate },
+      msg[2] ? { label: 'Ayarlar', ghost: true, fn: function () { window.Android.openLocationSettings(); } } : null
+    ]);
+  } else {
+    var text = (why === 'perm' || why === 'off') ? webLocHelp() : msg[1];
+    showState(msg[0], text, [
+      { label: 'Tekrar dene', fn: function () { $('stopName').textContent = 'Konumun bulunuyor…'; locate(); } },
+      { label: 'Konumsuz devam et', ghost: true, fn: continueWithoutLocation }
+    ]);
+  }
   spin(false);
 };
 
@@ -758,7 +781,7 @@ function stopIcon(sel) {
   return L.divIcon({ className: 'stop-ico', html: '<div class="stop-pin' + (sel ? ' sel' : '') + '">' + STOP_SVG + '</div>', iconSize: [36, 36], iconAnchor: [18, 18] });
 }
 function openStopsMap() {
-  var c = S.pos ? [S.pos.lat, S.pos.lng] : (S.stop ? [S.stop.lat, S.stop.lng] : [36.8969, 30.7133]);
+  var c = S.pos ? [S.pos.lat, S.pos.lng] : (S.stop ? [S.stop.lat, S.stop.lng] : [36.8970, 30.6510]); // varsayılan: Akdeniz Üniversitesi kampüsü
   if (!SM.map) {
     SM.map = makeMap('stopsMap', c, 16);
     SM.layer = L.layerGroup().addTo(SM.map);

@@ -1,6 +1,6 @@
 /* Akdeniz web — çevrimdışı kabuk. Sadece uygulamanın kendi dosyalarını önbelleğe alır;
    otobüs verisi ve harita HİÇBİR ZAMAN önbellekten verilmez (eski veri gösterilmesin). */
-var VERSION = '20261104203700';
+var VERSION = '20261104203948';
 var SHELL = ['./', 'index.html', 'timetable.js', 'app.js', 'app.css', 'web.js', 'config.js', 'leaflet.js', 'leaflet.css',
   'maplibre-gl.js', 'maplibre-gl.css', 'leaflet-maplibre-gl.js', 'manifest.webmanifest',
   'icon-192.png', 'icon-512.png', 'apple-touch-icon.png'];
@@ -17,7 +17,7 @@ self.addEventListener('fetch', function (e) {
   var url = new URL(e.request.url);
   if (e.request.method !== 'GET' || url.origin !== self.location.origin) return; // dış istekler (veri, harita) doğrudan ağa
   // Önce ağ, olmazsa önbellek: güncelleme yayınlanınca hemen gelsin
-  e.respondWith(fetch(e.request).then(function (res) {
+  e.respondWith(fetch(e.request, { cache: 'no-cache' }).then(function (res) { // tarayıcı önbelleğini atla, her seferinde sunucuya sor
     var copy = res.clone();
     caches.open('akdeniz-' + VERSION).then(function (c) { c.put(e.request, copy); });
     return res;

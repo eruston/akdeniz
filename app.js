@@ -429,7 +429,8 @@ function loadArrivals() {
     S.lines = buildLines(r, stop);
     renderList();
     S.lines.forEach(function (l) { queueSchedule(l, stop); });
-    if (S.mapLine) refreshMapCard();
+    noteLive(r);
+    if (S.mapLine) { refreshMapCard(); if (S.lastPath) drawBuses(S.mapLine); }
   }).catch(function (e) {
     if (my !== arrSeq) return;
     S.loading = false; spin(false);
@@ -918,9 +919,45 @@ function openMap(l) {
     .bindTooltip(S.stop.name, { permanent: false }).addTo(S.map);
   updateUserDot();
   refreshMapCard();
-  loadPath(l, true);
+  S.pathReqAt = Date.now(); loadPath(l, true);
   clearInterval(S.mapTimer);
-  S.mapTimer = setInterval(function () { if (S.mapLine) loadPath(S.mapLine, false); }, MAP_REFRESH_MS);
+  S.mapTimer = setInterval(mapTick, MAP_REFRESH_MS);
+}
+/* Harita açıkken 5 sn'de bir: durak sorgusu (canlı konum, sunucuda anlık) + 10 sn'de bir hat sorgusu
+   (sunucu bunu 20 sn'lik dilimlerle tazeliyor; güzergâh ve durağı geçmiş otobüsler için). */
+function mapTick() {
+  if (!S.mapLine) return;
+  if (S.stop && !S.loading) loadArrivals();
+  if (Date.now() - (S.pathReqAt || 0) >= 10000) { S.pathReqAt = Date.now(); loadPath(S.mapLine, false); }
+}
+function srvTime(r) {
+  var m = /^(\d{4})(\d\d)(\d\d)(\d\d)(\d\d)(\d\d)$/.exec((r && r.result && r.result.dateTime) || '');
+  return m ? new Date(+m[1], m[2] - 1, +m[3], +m[4], +m[5], +m[6]).getTime() : Date.now();
+}
+/* durak sorgusundan gelen otobüs konumları (plaka/kimlik ile), sunucu saatiyle */
+function noteLive(r) {
+  var t = srvTime(r); S.live = S.live || {};
+  (r.busList || []).forEach(function (b) {
+    var la = num(b.lat), lo = num(b.lng); if (!isFinite(la) || !isFinite(lo)) return;
+    var e = { lat: la, lng: lo, t: t }, pl = b.plate || b.plateNumber;
+    if (b.busId) S.live['i' + b.busId] = e;
+    if (pl) S.live['p' + pl] = e;
+  });
+  Object.keys(S.live).forEach(function (k) { if (t - S.live[k].t > 120000) delete S.live[k]; });
+}
+/* işareti eski yerinden yenisine kaydırarak götür (zıplamasın) */
+function glide(m, to, ms) {
+  var from = m.getLatLng();
+  if (from.lat === to[0] && from.lng === to[1]) return;
+  if (m._anim) { cancelAnimationFrame(m._anim); m._anim = null; }
+  if (document.hidden || dist(from.lat, from.lng, to[0], to[1]) > 1500) { m.setLatLng(to); return; }
+  var t0 = performance.now();
+  function f(now) {
+    var k = Math.min(1, (now - t0) / ms);
+    m.setLatLng([from.lat + (to[0] - from.lat) * k, from.lng + (to[1] - from.lng) * k]);
+    m._anim = k < 1 ? requestAnimationFrame(f) : null;
+  }
+  m._anim = requestAnimationFrame(f);
 }
 function closeMap() {
   S.mapLine = null; clearInterval(S.mapTimer);
@@ -1398,6 +1435,7 @@ function loadPath(l, first) {
         if (!has && i + 1 < dirs.length) return go(i + 1);
         l.pathDir = dirs[i];
       }
+      p.__srv = srvTime(r);
       drawPath(l, p, first);
     }, function () { if (my === pathSeq) { S.pathErr = true; mapStaleCheck(); } });
   }
@@ -1427,25 +1465,9 @@ function drawPath(l, p, fit) {
     sg.addTo(S.map); mapLayers.stops = sg;
     mapLayers.stop.bringToFront();
   }
-  if (mapLayers.buses) S.map.removeLayer(mapLayers.buses);
-  var grp = L.layerGroup();
-  var nextId = l.buses[0] ? String(l.buses[0].id || l.buses[0].plate) : null;
-  var nextLL = null, n = 0;
-  (p.busList || []).forEach(function (b) {
-    var la = num(b.lat), lo = num(b.lng); if (!isFinite(la) || !isFinite(lo)) return;
-    n++;
-    var isNext = nextId && (String(b.busId || '') === nextId || String(b.plate || b.plateNumber || '') === nextId);
-    var tk = S.track[S.stop.id + '|' + (b.busId || b.plate || '')];
-    var frozen = tk && Date.now() - tk.since >= FROZEN_MS;
-    if (isNext) nextLL = [la, lo];
-    var html = '<div class="bus-pin' + (isNext ? ' next' : '') + '" style="background:' + col + ';color:' + inkFor(col) + '">🚌 ' +
-      String(l.code).replace(/[<>&"]/g, '') + '</div>';
-    L.marker([la, lo], { icon: L.divIcon({ className: 'bus-ico', html: html, iconSize: [0, 0] }), zIndexOffset: isNext ? 1000 : 0, opacity: frozen ? 0.35 : 1 }).addTo(grp);
-  });
-  grp.addTo(S.map); mapLayers.buses = grp;
   S.lastPath = p;
   S.pathOkAt = Date.now(); S.pathErr = false;
-  $('mapMeta').textContent = n ? n + ' otobüs hatta · ' + clock(new Date()) + ' itibarıyla' : 'Şu an hatta canlı otobüs görünmüyor';
+  var nextLL = drawBuses(l);
   if (fit) {
     var bounds = L.latLngBounds([[S.stop.lat, S.stop.lng]]);
     if (nextLL) bounds.extend(nextLL);
@@ -1453,6 +1475,43 @@ function drawPath(l, p, fit) {
     if (S.pos && dist(S.pos.lat, S.pos.lng, S.stop.lat, S.stop.lng) < 2000) bounds.extend([S.pos.lat, S.pos.lng]);
     S.map.fitBounds(bounds, { padding: [50, 50], maxZoom: 16 });
   }
+}
+/* Hattaki otobüsler: liste hat sorgusundan; durağa gelenlerin konumu durak sorgusunda daha yeniyse onu kullan.
+   İşaretler kalıcı; yeni konuma kayarak gider. */
+function drawBuses(l) {
+  var p = S.lastPath; if (!p || !S.map) return null;
+  var col = l.color || '#0A5A73';
+  if (!mapLayers.buses) { mapLayers.buses = L.layerGroup().addTo(S.map); S.busMk = {}; }
+  var seen = {}, nextLL = null, n = 0, live = S.live || {};
+  var nextId = l.buses[0] ? String(l.buses[0].id || l.buses[0].plate) : null;
+  (p.busList || []).forEach(function (b) {
+    var la = num(b.lat), lo = num(b.lng); if (!isFinite(la) || !isFinite(lo)) return;
+    var pl = String(b.plate || b.plateNumber || ''), key = String(b.busId || pl);
+    if (!key || seen[key]) return;
+    var lv = (b.busId && live['i' + b.busId]) || (pl && live['p' + pl]);
+    if (lv && lv.t > (p.__srv || 0)) { la = lv.lat; lo = lv.lng; }
+    n++; seen[key] = 1;
+    var isNext = nextId && (String(b.busId || '') === nextId || pl === nextId);
+    var tk = S.track[S.stop.id + '|' + (b.busId || b.plate || '')];
+    var frozen = tk && Date.now() - tk.since >= FROZEN_MS;
+    if (isNext) nextLL = [la, lo];
+    var html = '<div class="bus-pin' + (isNext ? ' next' : '') + '" style="background:' + col + ';color:' + inkFor(col) + '">🚌 ' +
+      String(l.code).replace(/[<>&"]/g, '') + '</div>';
+    var m = S.busMk[key];
+    if (!m) {
+      m = S.busMk[key] = L.marker([la, lo], { icon: L.divIcon({ className: 'bus-ico', html: html, iconSize: [0, 0] }) }).addTo(mapLayers.buses);
+      m._html = html;
+    } else {
+      if (m._html !== html) { m.setIcon(L.divIcon({ className: 'bus-ico', html: html, iconSize: [0, 0] })); m._html = html; }
+      glide(m, [la, lo], 4000);
+    }
+    m.setZIndexOffset(isNext ? 1000 : 0); m.setOpacity(frozen ? 0.35 : 1);
+  });
+  Object.keys(S.busMk).forEach(function (k) {
+    if (!seen[k]) { var m = S.busMk[k]; if (m._anim) cancelAnimationFrame(m._anim); mapLayers.buses.removeLayer(m); delete S.busMk[k]; }
+  });
+  $('mapMeta').textContent = n ? n + ' otobüs hatta · ' + clock(new Date()) + ' itibarıyla' : 'Şu an hatta canlı otobüs görünmüyor';
+  return nextLL;
 }
 function selectStopFromMap(st) {
   haptic();
@@ -1483,7 +1542,7 @@ function mapStaleCheck() {
     $('mapMeta').textContent = 'Canlı konum alınamıyor · soluk işaretler ' + clock(new Date(S.pathOkAt)) + ' konumu';
     return;
   }
-  if (mapLayers.buses) { S.map.removeLayer(mapLayers.buses); mapLayers.buses = null; }
+  if (mapLayers.buses) { S.map.removeLayer(mapLayers.buses); mapLayers.buses = null; S.busMk = {}; }
   $('mapMeta').textContent = 'Canlı konum alınamıyor · otobüsler gösterilmiyor';
 }
 function refreshMapCard() {
@@ -1532,7 +1591,7 @@ window.__resume = function () {
   startTimers();
   if (!S.locBlocked && (!S.pos || Date.now() - S.pos.t > 60000)) locate();
   if (S.stop && !S.loading) loadArrivals();
-  if (S.mapLine) { clearInterval(S.mapTimer); S.mapTimer = setInterval(function () { if (S.mapLine) loadPath(S.mapLine, false); }, MAP_REFRESH_MS); loadPath(S.mapLine, false); }
+  if (S.mapLine) { clearInterval(S.mapTimer); S.mapTimer = setInterval(mapTick, MAP_REFRESH_MS); S.pathReqAt = Date.now(); loadPath(S.mapLine, false); }
 };
 
 $('refreshBtn').onclick = function () { locate(); if (S.stop) loadArrivals(); };

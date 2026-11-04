@@ -900,7 +900,7 @@ function showTab(t) {
 function haptic() {
   try {
     if (hasBridge && window.Android.tap) window.Android.tap();
-    else if (navigator.vibrate) navigator.vibrate(40);
+    else if (navigator.vibrate) navigator.vibrate(60);
   } catch (e) {}
 }
 

@@ -129,8 +129,21 @@ function inkFor(hex) {
   var r = parseInt(hex.substr(1, 2), 16), g = parseInt(hex.substr(3, 2), 16), b = parseInt(hex.substr(5, 2), 16);
   return (0.299 * r + 0.587 * g + 0.114 * b) > 170 ? '#1B1F1E' : '#fff';
 }
+/* Kentkart adları BÜYÜK HARFLE veriyor; ekranda düzgün Türkçe yazıma çevir ("HUKUK FAKÜLTESİ-1" → "Hukuk Fakültesi-1").
+   Kısaltmalar büyük kalır. Eşleştirmede her zaman durak numarası kullanıldığı için yalnızca görünümü etkiler. */
+var KEEP_UPPER = { 'AVM': 1, 'AKM': 1, 'PTT': 1, 'SGK': 1, 'TOKİ': 1, 'DSİ': 1, 'ATM': 1, 'KYK': 1, 'ÖSYM': 1, 'TRT': 1,
+  'TCDD': 1, 'AŞ': 1, 'A.Ş.': 1, 'AÜ': 1, 'ADM': 1, 'SSK': 1, 'MHP': 0, 'II': 1, 'III': 1, 'IV': 1, 'BLV': 0 };
+function nice(t) {
+  t = String(t == null ? '' : t).replace(/\s+/g, ' ').trim();
+  if (!t || t !== t.toLocaleUpperCase('tr')) return t; // zaten karışık yazılmışsa dokunma
+  return t.split(' ').map(function (w) {
+    if (KEEP_UPPER[w] || /^\d+[A-ZÇĞİÖŞÜ]{1,2}$/.test(w)) return w; // AVM, 5M gibi
+    var low = w.toLocaleLowerCase('tr');
+    return low.replace(/(^|[\-\/(.])([^\-\/(.])/g, function (m, p, c) { return p + c.toLocaleUpperCase('tr'); });
+  }).join(' ');
+}
 function sid(s) { return String(s.stopId != null ? s.stopId : s.busStopId != null ? s.busStopId : s.busStopid != null ? s.busStopid : s.id != null ? s.id : ''); }
-function sname(s) { return (s.stopName || s.name || s.busStopName || s.title || '').trim(); }
+function sname(s) { return nice(s.stopName || s.name || s.busStopName || s.title || ''); }
 function norm(x) { return String(x == null ? '' : x).trim().toUpperCase(); }
 
 /* ---------- durum ---------- */
@@ -331,7 +344,7 @@ function buildLines(r, stop) {
     }
     var g = groups[k];
     if (info) {
-      g.head = g.head || (info.headSign || info.headsign || '').trim();
+      g.head = g.head || nice(info.headSign || info.headsign || '');
       g.name = g.name || (info.name || info.routeName || '').trim();
       g.color = g.color || color(info.routeColor || info.color);
       g.routeCode = g.routeCode || info.routeCode;
@@ -355,7 +368,7 @@ function buildLines(r, stop) {
       for (var i = 0; i < order.length; i++) if (groups[order[i]].code.toUpperCase() === norm(code) && (groups[order[i]].dir == null || b.direction == null)) { g = groups[order[i]]; break; }
     }
     if (!g) g = add(code, b.direction, b);
-    if (!g.head && b.headSign) g.head = String(b.headSign).trim();
+    if (!g.head && b.headSign) g.head = nice(b.headSign);
     var bus = { m: m, sd: sd, at: isFinite(m) ? Date.now() + m * 60000 : NaN, lat: num(b.lat), lng: num(b.lng), plate: b.plate || b.plateNumber || '', id: b.busId || b.plate || '' };
     bus.frozen = trackBus(stop.id, bus);
     g.buses.push(bus);
@@ -404,7 +417,7 @@ function fetchSchedule(job) {
       var p = (r.pathList || [])[0];
       var data = p && extractTimes(p, stop.id);
       if (data) {
-        if (!line.head && p.headSign) data.head = String(p.headSign).trim();
+        if (!line.head && p.headSign) data.head = nice(p.headSign);
         return { ck: job.ck, data: data };
       }
       return tryDir(i + 1);
@@ -738,7 +751,7 @@ function openMap(l) {
   setTimeout(function () { S.map.invalidateSize(); }, 50);
   Object.keys(mapLayers).forEach(function (k) { S.map.removeLayer(mapLayers[k]); });
   mapLayers = {};
-  mapLayers.stop = L.circleMarker([S.stop.lat, S.stop.lng], { radius: 9, color: '#fff', weight: 3, fillColor: '#0E6B5C', fillOpacity: 1 })
+  mapLayers.stop = L.circleMarker([S.stop.lat, S.stop.lng], { radius: 9, color: '#fff', weight: 3, fillColor: '#0A5A73', fillOpacity: 1 })
     .bindTooltip(S.stop.name, { permanent: false }).addTo(S.map);
   updateUserDot();
   refreshMapCard();
@@ -802,7 +815,7 @@ function ensureAllStops() {
   SM.loadingAll = true;
   allStopsCached().then(function (list) {
     SM.loadingAll = false;
-    SM.all = list.map(function (a) { return { id: a[0], name: a[1], lat: a[2], lng: a[3], routes: '' }; });
+    SM.all = list.map(function (a) { return { id: a[0], name: nice(a[1]), lat: a[2], lng: a[3], routes: '' }; });
     drawStops();
   }, function () { SM.loadingAll = false; drawStops(); });
 }
@@ -951,7 +964,7 @@ function loadPath(l, first) {
   go(0);
 }
 function drawPath(l, p, fit) {
-  var col = l.color || '#0E6B5C';
+  var col = l.color || '#0A5A73';
   if (p.pointList && p.pointList.length) {
     var pts = p.pointList.slice().sort(function (a, b) { return int(a.seq) - int(b.seq); })
       .map(function (q) { return [num(q.lat), num(q.lng)]; }).filter(function (q) { return isFinite(q[0]) && isFinite(q[1]); });
@@ -1141,5 +1154,12 @@ document.querySelectorAll('.seg').forEach(function (b) {
 });
 if (S.fav.length) S.filter = 'all';
 spin(true);
+(function () {
+  var L0 = $('list');
+  if (!L0.children.length) {
+    L0.innerHTML = '<div class="locating"><div class="radar"><i></i><i></i><i></i><b></b></div>' +
+      '<h2>Konumun bulunuyor</h2><div>En yakın durak ve otobüsler birazdan burada.</div></div>';
+  }
+})();
 startTimers();
 locate();

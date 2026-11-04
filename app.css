@@ -1,13 +1,13 @@
 :root{
   --bg:#F4F2EE; --card:#FFFFFF; --ink:#1B1F1E; --muted:#6B716F; --line:#E4E0D8;
-  --brand:#0E6B5C; --brand-ink:#FFFFFF; --soon:#C2410C; --live:#16A34A; --star:#E0A100;
+  --brand:#0A5A73; --brand-ink:#FFFFFF; --soon:#C2410C; --live:#16A34A; --star:#E0A100;
 }
 @media (prefers-color-scheme:dark){
   :root:not(.light){ --bg:#121514; --card:#1C2120; --ink:#ECEFEE; --muted:#9AA3A0; --line:#2A302E;
-    --brand:#0E6B5C; --soon:#FB923C; --live:#4ADE80; --star:#F5C542; }
+    --brand:#0A5A73; --soon:#FB923C; --live:#4ADE80; --star:#F5C542; }
 }
 :root.dark{ --bg:#121514; --card:#1C2120; --ink:#ECEFEE; --muted:#9AA3A0; --line:#2A302E;
-  --brand:#0E6B5C; --soon:#FB923C; --live:#4ADE80; --star:#F5C542; color-scheme:dark; }
+  --brand:#0A5A73; --soon:#FB923C; --live:#4ADE80; --star:#F5C542; color-scheme:dark; }
 *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
 html,body{margin:0;height:100%;background:var(--bg);color:var(--ink);
   font-family:system-ui,-apple-system,"Roboto","Segoe UI",sans-serif;font-size:16px}
@@ -15,11 +15,11 @@ button{font:inherit;color:inherit;border:0;background:none;padding:0;cursor:poin
 [hidden]{display:none!important}
 .screen{min-height:100%;display:flex;flex-direction:column}
 
-.top{background:var(--brand);color:var(--brand-ink);padding:18px 16px 12px}
+.top{background:linear-gradient(160deg,#083D5C 0%,#0E7A86 100%);color:var(--brand-ink);padding:18px 16px 12px}
 .top-row{display:flex;align-items:flex-start;gap:12px}
 .where{flex:1;min-width:0}
 .eyebrow{font-size:12px;letter-spacing:.08em;text-transform:uppercase;opacity:.75}
-h1{margin:4px 0 2px;font-size:24px;line-height:1.2;font-weight:700;word-wrap:break-word}
+h1{margin:4px 0 2px;font-size:23px;line-height:1.2;font-weight:700;letter-spacing:-.01em;word-wrap:break-word}
 .top .meta{font-size:14px;opacity:.85}
 .icon-btn{width:42px;height:42px;border-radius:50%;display:grid;place-items:center;flex:none}
 .top .icon-btn{background:rgba(255,255,255,.14)}
@@ -123,7 +123,7 @@ h1{margin:4px 0 2px;font-size:24px;line-height:1.2;font-weight:700;word-wrap:bre
   display:flex;background:var(--card);border-top:1px solid var(--line);z-index:2000}
 .tab{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;font-size:12px;font-weight:600;color:var(--muted)}
 .tab.on{color:var(--brand)}
-:root.dark .tab.on{color:#4FD1B5}
+:root.dark .tab.on{color:#5CC8D6}
 #home{padding-bottom:calc(var(--tabbar) + env(safe-area-inset-bottom))}
 
 /* ---------- Duraklar haritası ---------- */
@@ -164,4 +164,20 @@ h1{margin:4px 0 2px;font-size:24px;line-height:1.2;font-weight:700;word-wrap:bre
 .diag pre{flex:1;overflow:auto;margin:0;background:var(--card);border:1px solid var(--line);border-radius:12px;padding:10px;
   font:12px/1.45 ui-monospace,Menlo,Consolas,monospace;white-space:pre-wrap;word-break:break-all;color:var(--ink)}
 
-:root.dark .btn.ghost{color:#4FD1B5;border-color:#2A302E}
+:root.dark .btn.ghost{color:#5CC8D6;border-color:#2A302E}
+
+/* açılış: konum aranırken */
+.locating{margin:56px 20px;text-align:center;color:var(--muted);line-height:1.5}
+.locating .radar{position:relative;width:72px;height:72px;margin:0 auto 18px}
+.locating .radar i{position:absolute;inset:0;border-radius:50%;border:2px solid var(--brand);opacity:0;animation:radar 2.2s ease-out infinite}
+.locating .radar i:nth-child(2){animation-delay:.7s}
+.locating .radar i:nth-child(3){animation-delay:1.4s}
+.locating .radar b{position:absolute;left:50%;top:50%;width:16px;height:16px;margin:-8px 0 0 -8px;border-radius:50%;background:#2563EB;border:3px solid #fff;box-shadow:0 1px 4px rgba(0,0,0,.3)}
+:root.dark .locating .radar i{border-color:#5CC8D6}
+@keyframes radar{0%{transform:scale(.25);opacity:.9}100%{transform:scale(1);opacity:0}}
+.locating h2{color:var(--ink);font-size:17px;margin:0 0 4px}
+/* yükleniyor iskeletleri: satırın şekline benzesin */
+.skel{position:relative;overflow:hidden}
+.skel::before{content:'';position:absolute;left:12px;top:13px;width:58px;height:40px;border-radius:10px;background:var(--line);opacity:.7}
+.skel::after{content:'';position:absolute;left:84px;top:18px;width:46%;height:12px;border-radius:6px;background:var(--line);opacity:.7;
+  box-shadow:0 20px 0 -2px var(--line)}

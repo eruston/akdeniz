@@ -859,11 +859,26 @@ function pumpCells() {
     })(t);
   }
 }
+/* Durakları yakınlığa göre çiz:
+   - yakınlık ≥ 16 : otobüs ikonları (DOM), en fazla 300
+   - yakınlık 14–15: küçük noktalar (tek tuval üzerine, çok hızlı) + ekranda birbirine çok yakın olanlardan biri
+   - yakınlık < 14 : hiçbiri, "yakınlaştır" uyarısı
+   Kaydırınca hepsi silinip yeniden çizilmez; sadece giren eklenir, çıkan kaldırılır. */
+var ICON_ZOOM = 16, DOT_ZOOM = 14, DOT_CELL_PX = 16, MAX_ICONS = 300, MAX_DOTS = 1500;
+SM.markers = {}; // id -> { m: marker, mode: 'icon'|'dot'|'sel' }
+function stopsDotStyle() {
+  return { radius: 4.5, color: '#fff', weight: 1.5, fillColor: '#1E6FD9', fillOpacity: 1, renderer: SM.canvas };
+}
+function clearStopMarkers() {
+  Object.keys(SM.markers).forEach(function (id) { SM.layer.removeLayer(SM.markers[id].m); });
+  SM.markers = {};
+}
 function drawStops(noFetch) {
   if (!SM.map || S.tab !== 'stops') return;
-  var hint = $('stopsHint');
-  if (SM.map.getZoom() < 14) {
-    SM.layer.clearLayers();
+  if (!SM.canvas) SM.canvas = L.canvas({ padding: 0.3, tolerance: 10 }); // tolerance: noktaya dokunma alanı
+  var hint = $('stopsHint'), z = SM.map.getZoom();
+  if (z < DOT_ZOOM) {
+    clearStopMarkers();
     hint.textContent = 'Durakları görmek için yakınlaştır'; hint.hidden = false;
     return;
   }
@@ -872,18 +887,53 @@ function drawStops(noFetch) {
   var merged = {};
   (SM.all || []).forEach(function (s) { merged[s.id] = s; });
   Object.keys(SM.near).forEach(function (k) { merged[k] = SM.near[k]; });
-  var src = Object.keys(merged).map(function (k) { return merged[k]; });
-  var b = SM.map.getBounds().pad(0.25);
-  var vis = src.filter(function (s) { return b.contains([s.lat, s.lng]); });
-  if (vis.length > 400) vis = vis.slice(0, 400);
-  SM.layer.clearLayers();
-  vis.forEach(function (s) {
-    var sel = s.id === SM.selId;
-    L.marker([s.lat, s.lng], { icon: stopIcon(sel), zIndexOffset: sel ? 1000 : 0, keyboard: false })
-      .on('click', function () { selectStopFromStops(s); }).addTo(SM.layer);
+  var b = SM.map.getBounds().pad(0.2);
+  var vis = [];
+  Object.keys(merged).forEach(function (k) { var st = merged[k]; if (b.contains([st.lat, st.lng])) vis.push(st); });
+
+  var mode = z >= ICON_ZOOM ? 'icon' : 'dot';
+  if (mode === 'dot') {
+    // ekranda ~16 px'lik karelere böl, her karede tek durak (seçili durak her zaman kalır)
+    var seen = {}, thin = [];
+    vis.forEach(function (st) {
+      var pt = SM.map.latLngToContainerPoint([st.lat, st.lng]);
+      var cell = z <= DOT_ZOOM ? 26 : DOT_CELL_PX; // en uzakta daha seyrek
+      var key = Math.floor(pt.x / cell) + ':' + Math.floor(pt.y / cell);
+      if (st.id === SM.selId || !seen[key]) { seen[key] = 1; thin.push(st); }
+    });
+    vis = thin.slice(0, MAX_DOTS);
+  } else if (vis.length > MAX_ICONS) {
+    var c = SM.map.getCenter();
+    vis.sort(function (x, y) { return dist(c.lat, c.lng, x.lat, x.lng) - dist(c.lat, c.lng, y.lat, y.lng); });
+    vis = vis.slice(0, MAX_ICONS);
+  }
+
+  var want = {};
+  vis.forEach(function (st) { want[st.id] = st; });
+  // ekrandan çıkanları ya da gösterim türü değişenleri kaldır
+  Object.keys(SM.markers).forEach(function (id) {
+    var cur = SM.markers[id], wantMode = id === SM.selId ? 'sel' : mode;
+    if (!want[id] || cur.mode !== wantMode) { SM.layer.removeLayer(cur.m); delete SM.markers[id]; }
   });
+  // yeni girenleri ekle
+  vis.forEach(function (st) {
+    if (SM.markers[st.id]) return;
+    var m, md;
+    if (st.id === SM.selId) {
+      md = 'sel'; m = L.marker([st.lat, st.lng], { icon: stopIcon(true), zIndexOffset: 1000, keyboard: false });
+    } else if (mode === 'icon') {
+      md = 'icon'; m = L.marker([st.lat, st.lng], { icon: stopIcon(false), keyboard: false });
+    } else {
+      md = 'dot'; m = L.circleMarker([st.lat, st.lng], stopsDotStyle());
+    }
+    m.on('click', function () { selectStopFromStops(st); }).addTo(SM.layer);
+    SM.markers[st.id] = { m: m, mode: md };
+  });
+
   if (!$('stopSheet').hidden) { hint.hidden = true; return; }
-  hint.textContent = vis.length ? 'Saatleri görmek için bir durağa dokun' : ((SM.loadingAll || SM.pending) ? 'Duraklar yükleniyor…' : 'Bu bölgede durak yok');
+  hint.textContent = vis.length
+    ? (mode === 'dot' ? 'Bir durağa dokun ya da yakınlaştır' : 'Saatleri görmek için bir durağa dokun')
+    : ((SM.loadingAll || SM.pending) ? 'Duraklar yükleniyor…' : 'Bu bölgede durak yok');
   hint.hidden = false;
 }
 function updateStopsMe() {
@@ -900,6 +950,8 @@ function selectStopFromStops(st) {
   s.d = S.pos ? dist(S.pos.lat, S.pos.lng, s.lat, s.lng) : NaN;
   var existing = S.stops.filter(function (x) { return x.id === s.id; })[0];
   if (existing) { existing.d = s.d; s = existing; } else S.stops.push(s);
+  if (SM.selId && SM.markers[SM.selId]) { SM.layer.removeLayer(SM.markers[SM.selId].m); delete SM.markers[SM.selId]; }
+  if (SM.markers[s.id]) { SM.layer.removeLayer(SM.markers[s.id].m); delete SM.markers[s.id]; }
   SM.selId = s.id;
   if (!S.stop || S.stop.id !== s.id) {
     S.stop = s; S.manual = s !== S.stops[0]; S.lines = []; S.err = null; S.lastOk = 0;
@@ -912,7 +964,9 @@ function selectStopFromStops(st) {
   if (pt.y > h * 0.45) SM.map.panBy([0, pt.y - h * 0.3]);
 }
 function closeSheet() {
-  $('stopSheet').hidden = true; SM.selId = null; drawStops(true);
+  var prev = SM.selId; $('stopSheet').hidden = true; SM.selId = null;
+  if (prev && SM.markers[prev]) { SM.layer.removeLayer(SM.markers[prev].m); delete SM.markers[prev]; }
+  drawStops(true);
 }
 function renderSheet() {
   var sh = $('stopSheet'); if (!sh || sh.hidden || !S.stop) return;

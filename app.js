@@ -723,9 +723,33 @@ function addBaseMap(map) {
     } else { done = true; clearTimeout(giveUp); }
   }).catch(function () { if (!done) { done = true; clearTimeout(giveUp); addRasterBase(map); } });
 }
+/* Harita kaynak yazısı: OSM kuralları gereği harita açılınca görünür; 5 sn sonra ya da haritaya ilk dokunuşta
+   sağ alttaki küçük "?" simgesine dönüşür, simgeye basınca tekrar açılır (osmfoundation.org/wiki/Attribution). */
+function compactAttribution(m) {
+  var box = m.getContainer(), timer = null;
+  var Btn = L.Control.extend({
+    options: { position: 'bottomright' },
+    onAdd: function () {
+      var b = L.DomUtil.create('button', 'attr-btn');
+      b.type = 'button'; b.textContent = '?'; b.setAttribute('aria-label', 'Harita kaynakları');
+      L.DomEvent.disableClickPropagation(b);
+      L.DomEvent.on(b, 'click', function (e) { L.DomEvent.stop(e); expand(); });
+      return b;
+    }
+  });
+  new Btn().addTo(m);
+  function collapse() { clearTimeout(timer); box.classList.add('attr-collapsed'); }
+  function expand() { box.classList.remove('attr-collapsed'); clearTimeout(timer); timer = setTimeout(collapse, 5000); }
+  expand(); // ilk açılışta görünür
+  // sadece gerçek kullanıcı dokunuşunda küçült (haritanın kendi konum ayarlaması sayılmaz)
+  L.DomEvent.on(box, 'touchstart mousedown wheel', function () {
+    if (!box.classList.contains('attr-collapsed')) collapse();
+  });
+}
 function makeMap(elId, center, zoom) {
   var m = L.map(elId, { zoomControl: false, attributionControl: true, minZoom: 9, maxZoom: 19 });
   m.attributionControl.setPrefix(false);
+  compactAttribution(m);
   m.setView(center, zoom);
   m.getContainer().classList.add('map-' + (DARK ? 'dark' : 'light'));
   addBaseMap(m);

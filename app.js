@@ -900,7 +900,7 @@ function showTab(t) {
 function haptic() {
   try {
     if (hasBridge && window.Android.tap) window.Android.tap();
-    else if (navigator.vibrate) navigator.vibrate(80); // TEST: en yüksek
+    else if (navigator.vibrate) navigator.vibrate(40);
   } catch (e) {}
 }
 
@@ -1516,7 +1516,6 @@ $('diagCopy').onclick = function () {
   $('diagCopy').textContent = 'Kopyalandı ✓';
   setTimeout(function () { $('diagCopy').textContent = 'Kopyala'; }, 1800);
 };
-$('diagVib').onclick = function () { haptic(); };
 $('diagTest').onclick = function () {
   $('diagTest').textContent = 'Test ediliyor…';
   var c = S.pos || (S.stop ? { lat: S.stop.lat, lng: S.stop.lng } : { lat: 36.8969, lng: 30.6510 });

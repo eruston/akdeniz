@@ -72,9 +72,18 @@ function hmsOf(t) { var d = new Date(t); return clock(d) + ':' + pad(d.getSecond
 function busSummary() {
   if (!BUSLOG.length) return ['Otobüs konum ölçümü: henüz otobüs konumu gelmedi.',
     '  (Durakta otobüs görünürken "Konumu ölç (2 dk)" düğmesine bas.)'];
+  var out = [], srcs = [];
+  BUSLOG.forEach(function (s) { if (srcs.indexOf(s.path) < 0) srcs.push(s.path); });
+  srcs.forEach(function (src) { out = out.concat(busSummaryFor(src, BUSLOG.filter(function (s) { return s.path === src; })), ['']); });
+  out.push('Son örnekler (saat · sorgu · otobüs · konum):');
+  BUSLOG.slice(-40).forEach(function (s) { out.push('  ' + hmsOf(s.t) + ' ' + (s.path === 'pathInfo' ? 'harita' : 'durak') + ' ' + s.k + ' ' + s.la.toFixed(5) + ',' + s.lo.toFixed(5)); });
+  return out;
+}
+function busSummaryFor(src, log) {
   var by = {}, order = [];
-  BUSLOG.forEach(function (s) { if (!by[s.k]) { by[s.k] = []; order.push(s.k); } by[s.k].push(s); });
-  var out = ['Otobüs konum ölçümü · ' + BUSLOG.length + ' örnek, ' + order.length + ' otobüs'], allIv = [], allGap = [];
+  log.forEach(function (s) { if (!by[s.k]) { by[s.k] = []; order.push(s.k); } by[s.k].push(s); });
+  var name = src === 'pathInfo' ? 'HAT HARİTASI sorgusu (pathInfo)' : src === 'nearest/bus' ? 'DURAK sorgusu (nearest/bus)' : src;
+  var out = ['Otobüs konum ölçümü · ' + name + ' · ' + log.length + ' örnek, ' + order.length + ' otobüs'], allIv = [], allGap = [];
   order.forEach(function (k) {
     var a = by[k].filter(function (s, i, arr) { return i === 0 || s.t - arr[i - 1].t >= 1000; }); // aynı anda gelen kopyaları at
     var ch = [], gaps = [];
@@ -95,8 +104,6 @@ function busSummary() {
   } else {
     out.push('  → Henüz yeterli değişim yok; ölçüm biraz daha sürmeli.');
   }
-  out.push('', 'Son örnekler (saat · otobüs · konum):');
-  BUSLOG.slice(-40).forEach(function (s) { out.push('  ' + hmsOf(s.t) + ' ' + s.k + ' ' + s.la.toFixed(5) + ',' + s.lo.toFixed(5)); });
   return out;
 }
 /* ---- BUSLOG-END ---- */

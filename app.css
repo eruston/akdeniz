@@ -196,7 +196,7 @@ h1{margin:4px 0 2px;font-size:23px;line-height:1.2;font-weight:700;letter-spacin
 /* yönlü konum işareti */
 .me-ico{background:none;border:0}
 .me{position:relative;width:120px;height:120px;pointer-events:none}
-.me-cone{position:absolute;left:0;top:0;transform-origin:60px 60px;transition:transform .15s linear,opacity .3s;opacity:0}
+.me-cone{position:absolute;left:0;top:0;transform-origin:60px 60px;transition:transform .08s linear,opacity .3s;opacity:0}
 .me-dot{position:absolute;left:51px;top:51px;width:18px;height:18px;border-radius:50%;background:#2563EB;border:3px solid #fff;
   box-sizing:border-box;box-shadow:0 1px 4px rgba(0,0,0,.35)}
 :root{--cone:#2563EB}

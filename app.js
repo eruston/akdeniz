@@ -5,7 +5,7 @@
 // Web sürümünde gerekirse aracı sunucu adresi config.js ile verilir; Android'de hep doğrudan Kentkart.
 var API = (window.DURAK_API || 'https://service.kentkart.com/rl1/') + 'web/';
 var BASE_QS = { region: '026', lang: 'tr', authType: '4' };
-var REFRESH_MS = 20000, MAP_REFRESH_MS = 10000, RELOCATE_MS = 120000;
+var REFRESH_MS = 20000, MAP_REFRESH_MS = 5000, RELOCATE_MS = 120000;
 
 /* ---------- köprü ---------- */
 var hasBridge = typeof window.Android !== 'undefined';

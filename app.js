@@ -54,9 +54,56 @@ function diagLog(path, params, t0, ok, info, raw) {
     raw: raw ? String(raw).slice(0, 220) : '' });
   if (DIAG.length > 15) DIAG.length = 15;
 }
+/* ---- BUSLOG-BEGIN: otobüs konum ölçümü (yalnız tanılama ekranı için) ----
+   Her busList cevabındaki otobüs konumlarını zamanla biriktirir; tanılama ekranında
+   "konum kaç saniyede bir değişiyor" özeti çıkarılır. Normal kullanımı etkilemez. */
+var BUSLOG = [];
+function busLog(path, j) {
+  if (!j || !j.busList || !j.busList.length) return;
+  var t = Date.now();
+  j.busList.forEach(function (b) {
+    var la = num(b.lat), lo = num(b.lng); if (!isFinite(la) || !isFinite(lo)) return;
+    BUSLOG.push({ t: t, path: path, k: String(b.plate || b.plateNumber || b.busId || '?'), la: la, lo: lo });
+  });
+  if (BUSLOG.length > 800) BUSLOG.splice(0, BUSLOG.length - 800);
+}
+function median(a) { if (!a.length) return NaN; var b = a.slice().sort(function (x, y) { return x - y; }), m = b.length >> 1; return b.length % 2 ? b[m] : (b[m - 1] + b[m]) / 2; }
+function hmsOf(t) { var d = new Date(t); return clock(d) + ':' + pad(d.getSeconds()); }
+function busSummary() {
+  if (!BUSLOG.length) return ['Otobüs konum ölçümü: henüz otobüs konumu gelmedi.',
+    '  (Durakta otobüs görünürken "Konumu ölç (2 dk)" düğmesine bas.)'];
+  var by = {}, order = [];
+  BUSLOG.forEach(function (s) { if (!by[s.k]) { by[s.k] = []; order.push(s.k); } by[s.k].push(s); });
+  var out = ['Otobüs konum ölçümü · ' + BUSLOG.length + ' örnek, ' + order.length + ' otobüs'], allIv = [], allGap = [];
+  order.forEach(function (k) {
+    var a = by[k].filter(function (s, i, arr) { return i === 0 || s.t - arr[i - 1].t >= 1000; }); // aynı anda gelen kopyaları at
+    var ch = [], gaps = [];
+    for (var i = 1; i < a.length; i++) {
+      gaps.push((a[i].t - a[i - 1].t) / 1000);
+      if (a[i].la !== a[i - 1].la || a[i].lo !== a[i - 1].lo) ch.push(a[i].t);
+    }
+    var span = Math.round((a[a.length - 1].t - a[0].t) / 1000);
+    var line = '  ' + k + ': ' + a.length + ' örnek / ' + span + ' sn · konum ' + ch.length + ' kez değişti';
+    var iv = []; for (var j = 1; j < ch.length; j++) iv.push((ch[j] - ch[j - 1]) / 1000);
+    if (iv.length) line += ' · değişimler arası ort. ' + Math.round(median(iv)) + ' sn (en az ' + Math.round(Math.min.apply(null, iv)) + ', en çok ' + Math.round(Math.max.apply(null, iv)) + ')';
+    out.push(line);
+    allIv = allIv.concat(iv); allGap = allGap.concat(gaps);
+  });
+  if (allIv.length >= 2) {
+    out.push('  → Sunucu otobüs konumunu yaklaşık ' + Math.round(median(allIv)) + ' sn\'de bir güncelliyor' +
+      ' (sorgu aralığı ~' + Math.round(median(allGap)) + ' sn, bu kadar hassas).');
+  } else {
+    out.push('  → Henüz yeterli değişim yok; ölçüm biraz daha sürmeli.');
+  }
+  out.push('', 'Son örnekler (saat · otobüs · konum):');
+  BUSLOG.slice(-40).forEach(function (s) { out.push('  ' + hmsOf(s.t) + ' ' + s.k + ' ' + s.la.toFixed(5) + ',' + s.lo.toFixed(5)); });
+  return out;
+}
+/* ---- BUSLOG-END ---- */
 function api(path, params) {
   var t0 = Date.now();
   return apiRaw(path, params).then(function (j) {
+    busLog(path, j);
     diagLog(path, params, t0, true, diagSummary(j), j && j.__raw);
     if (j) delete j.__raw;
     return j;
@@ -1502,7 +1549,7 @@ function diagText() {
     if (d.raw) lines.push('     ham: ' + d.raw.replace(/\s+/g, ' '));
   });
   if (!DIAG.length) lines.push('Henüz istek yok.');
-  return lines.join('\n');
+  return busSummary().concat([''], lines).join('\n');
 }
 function openDiag() {
   var o = $('diag'); o.hidden = false;
@@ -1526,6 +1573,22 @@ $('diagTest').onclick = function () {
     $('diagTest').textContent = 'Şimdi test et';
     $('diagText').textContent = diagText();
   });
+};
+var MEASURE = null;
+$('diagMeasure').onclick = function () {
+  var btn = $('diagMeasure');
+  if (MEASURE) { clearInterval(MEASURE.t); MEASURE = null; btn.textContent = 'Konumu ölç (2 dk)'; return; }
+  if (!S.stop) { btn.textContent = 'Önce durak bulunmalı'; setTimeout(function () { btn.textContent = 'Konumu ölç (2 dk)'; }, 1800); return; }
+  var stop = S.stop, end = Date.now() + 120000;
+  function step() {
+    var left = Math.ceil((end - Date.now()) / 1000);
+    if (left <= 0) { clearInterval(MEASURE.t); MEASURE = null; btn.textContent = 'Konumu ölç (2 dk)'; $('diagText').textContent = diagText(); return; }
+    btn.textContent = 'Ölçülüyor… ' + left + ' sn (durdur)';
+    api('nearest/bus', { lat: stop.lat, lng: stop.lng, busStopId: stop.id, accuracy: 0 }).catch(function () {}).then(function () {
+      if (!$('diag').hidden) $('diagText').textContent = diagText();
+    });
+  }
+  MEASURE = { t: setInterval(step, 3000) }; step();
 };
 $('backBtn').onclick = closeMap;
 document.querySelectorAll('.tab').forEach(function (b) { b.onclick = function () { if (S.tab !== b.dataset.tab) showTab(b.dataset.tab); syncHeading(true); }; });

@@ -223,3 +223,4 @@ h1{margin:4px 0 2px;font-size:23px;line-height:1.2;font-weight:700;letter-spacin
 .res mark{background:none;color:var(--brand);font-weight:700}
 :root.dark .res mark{color:#5CC8D6}
 .res .pin svg{width:18px;height:18px}
+.diag-btns{flex-wrap:wrap}

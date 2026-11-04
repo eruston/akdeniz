@@ -146,6 +146,71 @@ function sid(s) { return String(s.stopId != null ? s.stopId : s.busStopId != nul
 function sname(s) { return nice(s.stopName || s.name || s.busStopName || s.title || ''); }
 function norm(x) { return String(x == null ? '' : x).trim().toUpperCase(); }
 
+
+/* ---------- gömülü tarife yedeği (timetable.js → window.TT) ----------
+   Kaynak: kk-gtfs (CC0), Kentkart verisinden 1 Kasım 2026'da üretilmiş. Sefer saatleri yalnızca geçerlilik
+   aralığında kullanılır (sonrasında yanlış saat göstermemek için kapanır); durak listesi her zaman kullanılabilir. */
+var TTX = null;
+function ttHas() { return !!(window.TT && TT.stops && TT.pats); }
+function ymd(d) { return d.getFullYear() + pad(d.getMonth() + 1) + pad(d.getDate()); }
+function ttTimesValid() { if (!ttHas()) return false; var t = ymd(new Date()); return t >= TT.validFrom && t <= TT.validTo; }
+function ttDateLabel() { if (!ttHas()) return ''; var v = TT.validFrom; return +v.slice(6) + '.' + v.slice(4, 6) + '.' + v.slice(0, 4); }
+function ttIndex() {
+  if (TTX || !ttHas()) return TTX;
+  var byId = {}, byStop = {}, byCode = {};
+  TT.stops.forEach(function (st, i) { byId[st[0]] = i; });
+  TT.pats.forEach(function (p, pi) {
+    p[3].forEach(function (si, pos) { (byStop[si] = byStop[si] || []).push([pi, pos]); });
+    var code = norm(TT.routes[p[0]][0]);
+    (byCode[code] = byCode[code] || []).push(pi);
+  });
+  TTX = { byId: byId, byStop: byStop, byCode: byCode, stops: null };
+  return TTX;
+}
+function ttStopObj(i) { var st = TT.stops[i]; return { id: st[0], name: nice(st[1]), lat: st[2], lng: st[3], routes: '' }; }
+function ttAllStops() {
+  var X = ttIndex(); if (!X) return [];
+  if (!X.stops) X.stops = TT.stops.map(function (st, i) { return ttStopObj(i); });
+  return X.stops;
+}
+function ttDayCol(d) { var w = (d || new Date()).getDay(); return w === 0 ? 7 : (w === 6 ? 6 : 5); } // pazar / cumartesi / hafta içi
+/* Bir durakta, verilen hat+yön (yön null = hepsi) için bugünkü varış saatleri (saniye, sıralı) */
+function ttArrivals(stopId, code, dir) {
+  if (!ttTimesValid()) return null;
+  var X = ttIndex(), si = X.byId[String(stopId)]; if (si == null) return null;
+  var col = ttDayCol(), out = [], head = '';
+  (X.byStop[si] || []).forEach(function (e) {
+    var p = TT.pats[e[0]];
+    if (norm(TT.routes[p[0]][0]) !== norm(code)) return;
+    if (dir != null && String(p[1]) !== String(dir)) return;
+    if (e[1] === p[3].length - 1) return; // son durak: buraya gelen otobüs binilecek otobüs değil
+    var off = p[4][e[1]];
+    p[col].forEach(function (m) { out.push((m + off) * 60); });
+    if (!head) head = nice(p[2]);
+  });
+  if (!out.length) return null;
+  out.sort(function (a, b) { return a - b; });
+  return { off: 0, times: out, head: head, src: 'tt' };
+}
+/* Canlı veri yokken bir durağın hatlarını tarifeden üret */
+function ttLinesForStop(stop) {
+  if (!ttTimesValid()) return [];
+  var X = ttIndex(), si = X.byId[String(stop.id)]; if (si == null) return [];
+  var seen = {}, lines = [];
+  (X.byStop[si] || []).forEach(function (e) {
+    var p = TT.pats[e[0]], r = TT.routes[p[0]];
+    if (e[1] === p[3].length - 1) return;
+    var key = norm(r[0]) + '|' + p[1];
+    if (seen[key]) return; seen[key] = 1;
+    var l = { key: key, code: r[0], dir: String(p[1]), name: nice(r[1]), head: nice(p[2]), color: color(r[2]), buses: [], plan: null, offline: true };
+    l.ck = l.code + '|' + l.dir + '|' + stop.id + '|' + todayKey();
+    S.sched[l.ck] = ttArrivals(stop.id, l.code, l.dir) || false;
+    applyPlan(l);
+    lines.push(l);
+  });
+  return lines;
+}
+
 /* ---------- durum ---------- */
 var S = {
   pos: null, stops: [], stop: null, manual: false,
@@ -242,12 +307,17 @@ function findStops() {
   var p = S.pos; if (!p) return;
   spin(true);
   if (!S.stops.length) $('stopName').textContent = 'Durak aranıyor…';
+  function ttNear() { return ttAllStops().filter(function (s) { return dist(p.lat, p.lng, s.lat, s.lng) < 3000; }).slice(); }
   api('nearest/place', { lat: p.lat.toFixed(6), lng: p.lng.toFixed(6) }).then(function (r) {
     var list = (r.stopList || []).map(mapStop).filter(function (s) { return s.id && isFinite(s.lat); });
     if (list.length) return list;
+    var t = ttNear(); if (t.length) return t;
     return allStopsCached().then(function (all) {
-      return all.map(function (a) { return { id: a[0], name: a[1], lat: a[2], lng: a[3], routes: '' }; });
+      return all.map(function (a) { return { id: a[0], name: nice(a[1]), lat: a[2], lng: a[3], routes: '' }; });
     });
+  }, function (e) {
+    var t = ttNear(); if (t.length) return t; // sunucu yoksa telefondaki durak listesi
+    throw e;
   }).then(function (list) {
     list.forEach(function (s) { s.d = dist(p.lat, p.lng, s.lat, s.lng); });
     list.sort(function (a, b) { return a.d - b.d; });
@@ -298,7 +368,7 @@ function loadArrivals() {
   S.loading = true; spin(true);
   api('nearest/bus', { lat: stop.lat, lng: stop.lng, busStopId: stop.id, accuracy: 0 }).then(function (r) {
     if (my !== arrSeq) return;
-    S.loading = false; S.err = null; S.lastOk = Date.now(); spin(false);
+    S.loading = false; S.err = null; S.lastOk = Date.now(); S.ttFallback = false; spin(false);
     S.lines = buildLines(r, stop);
     renderList();
     S.lines.forEach(function (l) { queueSchedule(l, stop); });
@@ -307,7 +377,12 @@ function loadArrivals() {
     if (my !== arrSeq) return;
     S.loading = false; spin(false);
     S.err = e.message || 'Hata';
+    if (!S.lines.length || S.ttFallback) {
+      var tl = ttLinesForStop(stop);
+      if (tl.length) { S.lines = tl; S.ttFallback = true; }
+    }
     renderList();
+    if (S.mapLine) refreshMapCard();
   });
 }
 /* Donmuş otobüs tespiti: sunucu aynı otobüsü 3 dk boyunca aynı yerde, aynı durak farkıyla
@@ -400,12 +475,14 @@ function queueSchedule(line, stop) {
 function pumpSchedule() {
   while (schedActive < 3 && schedQ.length) {
     var job = schedQ.shift(); schedActive++;
-    fetchSchedule(job).then(function (res) {
-      S.sched[res.ck] = res.data;
+    (function (job) { fetchSchedule(job).then(function (res) {
+      // Kentkart'ın güncel tarifesi gelmezse telefondaki tarifeye düş (kaydetme: ertesi gün tekrar denensin)
+      var data = res.data || ttArrivals(job.stop.id, job.line.code, job.line.dir) || false;
+      S.sched[res.ck] = data;
       if (res.data) store.set('sch:' + res.ck, res.data);
       S.lines.forEach(function (l) { if (l.ck === res.ck) applyPlan(l); });
       renderList();
-    }).catch(function () {}).then(function () { schedActive--; pumpSchedule(); });
+    }).catch(function () {}).then(function () { schedActive--; pumpSchedule(); }); })(job);
   }
 }
 function fetchSchedule(job) {
@@ -491,7 +568,7 @@ function renderHeader() {
   var C = $('stopChips'); C.innerHTML = '';
   S.stops.forEach(function (x) {
     var b = el('button', 'chip' + (x.id === s.id ? ' on' : ''), x.name + ' · ' + fmtDist(x.d));
-    b.onclick = function () { pickStop(x); };
+    b.onclick = function () { haptic(); pickStop(x); };
     C.appendChild(b);
   });
 }
@@ -555,6 +632,8 @@ function lineRow(l) {
     sub.textContent = l.frozenCount ? 'Konum donuk · tarife' : (minsTo(first.at) < 60 ? 'Tarife · ' + clock(new Date(first.at)) : 'Tarifeye göre');
   } else if (l.plan && l.plan.approx && l.plan.next && l.plan.next.length) {
     sub.textContent = 'Hat başından kalkış ' + l.plan.next.map(sClock).join(' · ');
+  } else if (l.offline) {
+    sub.textContent = 'Bugün başka sefer yok';
   } else if (liveDown()) {
     sub.textContent = 'Canlı veri alınamıyor';
   } else if (!liveFresh()) {
@@ -644,10 +723,12 @@ function renderList() {
   if (liveDown()) up.textContent = 'Son veri ' + clock(new Date(S.lastOk));
   else if (S.err && S.lastOk) up.textContent = 'Bağlantı zayıf · ' + clock(new Date(S.lastOk));
   else if (S.lastOk) up.textContent = 'Güncellendi ' + clock(new Date(S.lastOk));
-  if (liveDown()) {
+  if (liveDown() || S.ttFallback) {
     var warn = el('div', 'stale');
     warn.appendChild(el('b', null, 'Canlı veriye ulaşılamıyor'));
-    warn.appendChild(el('div', null, 'Gösterilen saatler yalnızca tarifeden. Bağlantı gelince canlı süreler kendiliğinden döner.'));
+    warn.appendChild(el('div', null, S.ttFallback
+      ? 'Saatler telefondaki tarifeden (' + ttDateLabel() + ' verisi). Bağlantı gelince canlı süreler kendiliğinden döner.'
+      : 'Gösterilen saatler yalnızca tarifeden. Bağlantı gelince canlı süreler kendiliğinden döner.'));
     L.insertBefore(warn, L.firstChild);
   }
 }
@@ -792,6 +873,7 @@ function closeMap() {
 }
 window.__back = function () {
   if (S.mapLine) { closeMap(); return true; }
+  if (S.tab === 'stops' && searchOpen()) { closeSearch(); return true; }
   if (S.tab === 'stops' && !$('stopSheet').hidden) { closeSheet(); return true; }
   if (S.tab === 'stops') { showTab('home'); return true; }
   return false;
@@ -811,6 +893,152 @@ function showTab(t) {
   if (t === 'stops') openStopsMap();
   else renderList();
   syncHeading();
+}
+
+
+/* ---------- dokunma titreşimi ---------- */
+function haptic() {
+  try {
+    if (hasBridge && window.Android.tap) window.Android.tap();
+    else if (navigator.vibrate) navigator.vibrate(12);
+  } catch (e) {}
+}
+
+/* ---------- arama: durak adı / numarası ve hat kodu ---------- */
+function fold(t) {
+  var map = { 'ç': 'c', 'ğ': 'g', 'ı': 'i', 'ö': 'o', 'ş': 's', 'ü': 'u', 'â': 'a', 'î': 'i', 'û': 'u' };
+  return String(t || '').toLocaleLowerCase('tr').replace(/[çğıöşüâîû]/g, function (c) { return map[c]; })
+    .replace(/̇/g, '').replace(/[^a-z0-9]+/g, ' ').trim();
+}
+var SX = null; // arama dizini
+function searchIndex() {
+  if (SX) return SX;
+  var stops = {}, lines = [];
+  (ttHas() ? ttAllStops() : []).forEach(function (st) { stops[st.id] = st; });
+  Object.keys(SM.near).forEach(function (k) { if (!stops[k]) stops[k] = SM.near[k]; });
+  S.stops.forEach(function (st) { if (!stops[st.id]) stops[st.id] = st; });
+  var sl = Object.keys(stops).map(function (k) { var st = stops[k]; return { st: st, f: fold(st.name) }; });
+  if (ttHas()) {
+    var X = ttIndex();
+    Object.keys(X.byCode).forEach(function (code) {
+      var byDir = {};
+      X.byCode[code].forEach(function (pi) {
+        var p = TT.pats[pi], d = String(p[1]), n = p[5].length + p[6].length + p[7].length;
+        if (!byDir[d] || n > byDir[d].n) byDir[d] = { n: n, p: p };
+      });
+      Object.keys(byDir).sort().forEach(function (d) {
+        var p = byDir[d].p, r = TT.routes[p[0]];
+        lines.push({ code: r[0], dir: d, head: nice(p[2]), name: nice(r[1]), color: color(r[2]), f: fold(r[0]), fh: fold(p[2]) + ' ' + fold(r[1]) });
+      });
+    });
+  }
+  SX = { stops: sl, lines: lines };
+  return SX;
+}
+function runSearch(q) {
+  var f = fold(q), box = $('results');
+  box.innerHTML = '';
+  if (!f) { box.appendChild(el('div', 'res-empty', 'Durak adı ("hukuk", "rektörlük"), durak numarası ya da hat kodu ("AÜ103", "KL08") yaz.')); return; }
+  var X = searchIndex(), toks = f.split(' ');
+  // hatlar: kod eşleşmesi önce, sonra yön/hat adında geçenler
+  var lines = X.lines.filter(function (l) { return l.f.indexOf(f.replace(/ /g, '')) === 0; });
+  if (lines.length < 6 && f.length >= 3) X.lines.forEach(function (l) {
+    if (lines.indexOf(l) < 0 && toks.every(function (t) { return l.fh.indexOf(t) >= 0; })) lines.push(l);
+  });
+  lines = lines.slice(0, 8);
+  // duraklar: numara ya da tüm kelimeler adda geçsin; başta geçen ve yakın olan önce
+  var isNum = /^\d+$/.test(f), stops = [];
+  X.stops.forEach(function (o) {
+    var sc;
+    if (isNum) { if (String(o.st.id).indexOf(f) !== 0) return; sc = 0; }
+    else {
+      if (!toks.every(function (t) { return o.f.indexOf(t) >= 0; })) return;
+      sc = o.f.indexOf(f) === 0 ? 0 : ((' ' + o.f).indexOf(' ' + toks[0]) >= 0 ? 1 : 2);
+    }
+    var d = S.pos ? dist(S.pos.lat, S.pos.lng, o.st.lat, o.st.lng) : 0;
+    stops.push({ st: o.st, sc: sc, d: d });
+  });
+  stops.sort(function (a, b) { return a.sc - b.sc || a.d - b.d; });
+  stops = stops.slice(0, 15);
+
+  if (lines.length) {
+    box.appendChild(el('div', 'section', 'Hatlar'));
+    lines.forEach(function (l) {
+      var r = el('button', 'res'), bd = el('div', 'badge', l.code);
+      if (l.color) { bd.style.background = l.color; bd.style.color = inkFor(l.color); }
+      var t = el('div', 't'); t.appendChild(el('b', null, '→ ' + l.head)); t.appendChild(el('span', null, l.name));
+      r.appendChild(bd); r.appendChild(t);
+      r.onclick = function () { haptic(); closeSearch(); openLineFromSearch(l); };
+      box.appendChild(r);
+    });
+  }
+  if (stops.length) {
+    box.appendChild(el('div', 'section', 'Duraklar'));
+    stops.forEach(function (o) {
+      var r = el('button', 'res'), pin = el('div', 'pin'); pin.innerHTML = STOP_SVG;
+      var t = el('div', 't'); t.appendChild(el('b', null, o.st.name));
+      t.appendChild(el('span', null, 'Durak no ' + o.st.id + (S.pos ? ' · ' + fmtDist(o.d) : '')));
+      r.appendChild(pin); r.appendChild(t);
+      r.onclick = function () { haptic(); closeSearch(); goToStop(o.st); };
+      box.appendChild(r);
+    });
+  }
+  if (!lines.length && !stops.length) box.appendChild(el('div', 'res-empty', '"' + q + '" için sonuç bulunamadı.'));
+  // telefondaki listede olmayan yeni duraklar için Kentkart'a da sor (sessizce, sonuç azsa)
+  if (!isNum && stops.length < 3 && f.length >= 3) {
+    clearTimeout(SX.t); var asked = q;
+    SX.t = setTimeout(function () {
+      api('nearest/find', { keyword: asked }).then(function (r) {
+        if ($('q').value !== asked) return;
+        var add = (r.stopList || []).map(mapStop).filter(function (st) { return st.id && isFinite(st.lat); });
+        var have = {}; X.stops.forEach(function (o) { have[o.st.id] = 1; });
+        var fresh = add.filter(function (st) { return !have[st.id]; });
+        if (fresh.length) { fresh.forEach(function (st) { X.stops.push({ st: st, f: fold(st.name) }); }); runSearch(asked); }
+      }, function () {});
+    }, 450);
+  }
+}
+function openSearch() {
+  $('results').hidden = false; $('stopsHint').hidden = true;
+  runSearch($('q').value);
+}
+function closeSearch() {
+  $('results').hidden = true; $('q').blur();
+  if (SM.map) drawStops(true);
+}
+function searchOpen() { return !$('results').hidden; }
+function goToStop(st) {
+  if (!SM.map) return;
+  SM.map.setView([st.lat, st.lng], Math.max(SM.map.getZoom(), 17), { animate: false });
+  addNear([st]);
+  drawStops(true);
+  selectStopFromStops(st);
+}
+/* Hat aramasından: o yöndeki duraklardan sana en yakın olanı seç, hattın canlı haritasını aç */
+function openLineFromSearch(l) {
+  var best = null;
+  if (ttHas()) {
+    var X = ttIndex();
+    (X.byCode[norm(l.code)] || []).forEach(function (pi) {
+      var p = TT.pats[pi]; if (String(p[1]) !== String(l.dir)) return;
+      p[3].forEach(function (si, pos) {
+        if (pos === p[3].length - 1) return;
+        var st = TT.stops[si], d = S.pos ? dist(S.pos.lat, S.pos.lng, st[2], st[3]) : pos;
+        if (!best || d < best.d) best = { si: si, d: d };
+      });
+    });
+  }
+  if (best) {
+    var st = ttStopObj(best.si); st.d = S.pos ? best.d : NaN;
+    var ex = S.stops.filter(function (x) { return x.id === st.id; })[0];
+    if (ex) st = ex; else S.stops.push(st);
+    if (!S.stop || S.stop.id !== st.id) {
+      S.stop = st; S.manual = true; S.lines = []; S.err = null; S.lastOk = 0;
+      renderHeader(); renderList(); loadArrivals();
+    }
+  }
+  if (!S.stop) return;
+  openMap({ key: norm(l.code) + '|' + l.dir, code: l.code, dir: String(l.dir), head: l.head, name: l.name, color: l.color, buses: [], plan: null });
 }
 
 /* ---------- Duraklar haritası ---------- */
@@ -839,6 +1067,7 @@ function openStopsMap() {
 }
 function ensureAllStops() {
   if (SM.all || SM.loadingAll) return;
+  if (ttHas()) { SM.all = ttAllStops(); drawStops(); return; }
   SM.loadingAll = true;
   allStopsCached().then(function (list) {
     SM.loadingAll = false;
@@ -848,6 +1077,7 @@ function ensureAllStops() {
 }
 var CELL_LAT = 0.004, CELL_LNG = 0.005;
 function addNear(list) {
+  if (SX && list.length) SX = null;
   list.forEach(function (s) { if (s && s.id && isFinite(s.lat) && isFinite(s.lng)) SM.near[s.id] = s; });
 }
 function fetchCells() {
@@ -973,6 +1203,7 @@ function updateStopsMe() {
   else SM.me = makeMe(ll, SM.map);
 }
 function selectStopFromStops(st) {
+  haptic();
   var s = { id: st.id, name: st.name, lat: st.lat, lng: st.lng, routes: st.routes || '' };
   s.d = S.pos ? dist(S.pos.lat, S.pos.lng, s.lat, s.lng) : NaN;
   var existing = S.stops.filter(function (x) { return x.id === s.id; })[0];
@@ -1011,7 +1242,7 @@ function renderSheet() {
     box.appendChild(el('div', 'sheet-empty', 'Bu duraktan geçen hat bulunamadı.'));
     return;
   }
-  if (liveDown()) box.appendChild(el('div', 'sheet-empty warn', 'Canlı veriye ulaşılamıyor · saatler tarifeden'));
+  if (liveDown() || S.ttFallback) box.appendChild(el('div', 'sheet-empty warn', 'Canlı veriye ulaşılamıyor · saatler tarifeden'));
   var lines = S.lines.slice().sort(function (a, b) { return score(a) - score(b); });
   lines.slice(0, 4).forEach(function (l) { box.appendChild(lineRow(l)); });
   all.hidden = false;
@@ -1167,6 +1398,7 @@ function drawPath(l, p, fit) {
   }
 }
 function selectStopFromMap(st) {
+  haptic();
   if (!S.mapLine || (S.stop && S.stop.id === st.id)) return;
   st.d = S.pos ? dist(S.pos.lat, S.pos.lng, st.lat, st.lng) : NaN;
   if (!S.stops.some(function (x) { return x.id === st.id; })) S.stops.push(st);
@@ -1211,7 +1443,7 @@ function refreshMapCard() {
   var C = $('mapCard'); C.innerHTML = '';
   var b0 = liveFresh() ? l.buses[0] : null;
   var big = el('div', 'big'), txt = el('div', 'txt');
-  if (!b0 && liveDown()) {
+  if (!b0 && (liveDown() || S.ttFallback)) {
     big.textContent = '—';
     var nx = arrivals(l)[0];
     txt.textContent = 'Canlı veriye ulaşılamıyor' + (nx ? ' · tarifeye göre ' + clock(new Date(nx.at)) : '');
@@ -1297,6 +1529,10 @@ $('diagTest').onclick = function () {
 $('backBtn').onclick = closeMap;
 document.querySelectorAll('.tab').forEach(function (b) { b.onclick = function () { if (S.tab !== b.dataset.tab) showTab(b.dataset.tab); syncHeading(true); }; });
 $('sheetClose').onclick = closeSheet;
+$('q').addEventListener('focus', openSearch);
+$('q').addEventListener('input', function () { $('qClear').hidden = !$('q').value; openSearch(); });
+$('q').addEventListener('keydown', function (e) { if (e.key === 'Enter') $('q').blur(); });
+$('qClear').onclick = function () { $('q').value = ''; $('qClear').hidden = true; $('q').focus(); runSearch(''); };
 $('sheetAll').onclick = function () { closeSheet(); showTab('home'); };
 $('locBtn').onclick = function () {
   syncHeading(true);

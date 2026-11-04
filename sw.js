@@ -1,7 +1,7 @@
 /* Akdeniz web — çevrimdışı kabuk. Sadece uygulamanın kendi dosyalarını önbelleğe alır;
    otobüs verisi ve harita HİÇBİR ZAMAN önbellekten verilmez (eski veri gösterilmesin). */
-var VERSION = '20261104122825';
-var SHELL = ['./', 'index.html', 'app.js', 'app.css', 'web.js', 'config.js', 'leaflet.js', 'leaflet.css',
+var VERSION = '20261104142716';
+var SHELL = ['./', 'index.html', 'timetable.js', 'app.js', 'app.css', 'web.js', 'config.js', 'leaflet.js', 'leaflet.css',
   'maplibre-gl.js', 'maplibre-gl.css', 'leaflet-maplibre-gl.js', 'manifest.webmanifest',
   'icon-192.png', 'icon-512.png', 'apple-touch-icon.png'];
 

@@ -59,9 +59,12 @@ function diagLog(path, params, t0, ok, info, raw) {
    "konum kaç saniyede bir değişiyor" özeti çıkarılır. Normal kullanımı etkilemez. */
 var BUSLOG = [];
 function busLog(path, j) {
-  if (!j || !j.busList || !j.busList.length) return;
+  if (!j) return;
+  var list = (j.busList || []).slice();
+  (j.pathList || []).forEach(function (p) { if (p && p.busList) list = list.concat(p.busList); }); // hat haritası: otobüsler pathList içinde
+  if (!list.length) return;
   var t = Date.now();
-  j.busList.forEach(function (b) {
+  list.forEach(function (b) {
     var la = num(b.lat), lo = num(b.lng); if (!isFinite(la) || !isFinite(lo)) return;
     BUSLOG.push({ t: t, path: path, k: String(b.plate || b.plateNumber || b.busId || '?'), la: la, lo: lo });
   });

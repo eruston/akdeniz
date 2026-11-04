@@ -762,6 +762,7 @@ function openMap(l) {
   S.mapLine = l; S.pathOkAt = 0; S.pathErr = false;
   S.mapFrom = S.tab;
   saveStopsView();
+  setTimeout(function () { syncHeading(); }, 0);
   $('home').hidden = true; $('stopsScreen').hidden = true; $('tabbar').hidden = true; $('mapScreen').hidden = false;
   var badge = $('mapBadge'); badge.textContent = l.code;
   badge.style.background = l.color || ''; badge.style.color = l.color ? inkFor(l.color) : '';
@@ -787,6 +788,7 @@ function closeMap() {
   S.mapLine = null; clearInterval(S.mapTimer);
   $('mapScreen').hidden = true; $('tabbar').hidden = false;
   showTab(S.mapFrom || 'home');
+  syncHeading();
 }
 window.__back = function () {
   if (S.mapLine) { closeMap(); return true; }
@@ -808,6 +810,7 @@ function showTab(t) {
   document.querySelectorAll('.tab').forEach(function (b) { b.classList.toggle('on', b.dataset.tab === t); });
   if (t === 'stops') openStopsMap();
   else renderList();
+  syncHeading();
 }
 
 /* ---------- Duraklar haritası ---------- */
@@ -967,7 +970,7 @@ function updateStopsMe() {
   if (SM.acc) SM.acc.setLatLng(ll).setRadius(r);
   else SM.acc = L.circle(ll, { radius: r, stroke: false, fillColor: '#2563EB', fillOpacity: 0.12, interactive: false }).addTo(SM.map);
   if (SM.me) SM.me.setLatLng(ll);
-  else SM.me = L.circleMarker(ll, { radius: 7, color: '#fff', weight: 3, fillColor: '#2563EB', fillOpacity: 1, interactive: false }).addTo(SM.map);
+  else SM.me = makeMe(ll, SM.map);
 }
 function selectStopFromStops(st) {
   var s = { id: st.id, name: st.name, lat: st.lat, lng: st.lng, routes: st.routes || '' };
@@ -1014,11 +1017,82 @@ function renderSheet() {
   all.hidden = false;
   all.textContent = lines.length > 4 ? 'Tüm hatlar (' + lines.length + ')' : 'Durağın tüm ayrıntıları';
 }
+/* ---------- yönlü konum işareti ----------
+   Mavi nokta + telefonun baktığı yöne açılan soluk koni (Google Haritalar gibi).
+   Yön: Android'de telefonun yön sensörü (gerçek kuzeye düzeltilmiş), web'de tarayıcının pusulası.
+   Pusula sadece bir harita ekranı açıkken çalışır. */
+S.heading = null; S.headRot = 0;
+var ME_HTML = '<div class="me"><svg class="me-cone" viewBox="0 0 120 120" width="120" height="120" aria-hidden="true">' +
+  '<defs><radialGradient id="meCone" cx="60" cy="60" r="58" gradientUnits="userSpaceOnUse">' +
+  '<stop offset="0" style="stop-color:var(--cone);stop-opacity:.7"/><stop offset=".55" style="stop-color:var(--cone);stop-opacity:.35"/>' +
+  '<stop offset="1" style="stop-color:var(--cone);stop-opacity:0"/></radialGradient></defs>' +
+  '<path d="M60 60 L26.7 12.5 A58 58 0 0 1 93.3 12.5 Z" fill="url(#meCone)"/></svg><div class="me-dot"></div></div>';
+function meIcon() { return L.divIcon({ className: 'me-ico', html: ME_HTML, iconSize: [120, 120], iconAnchor: [60, 60] }); }
+function makeMe(ll, map) {
+  var m = L.marker(ll, { icon: meIcon(), interactive: false, keyboard: false, zIndexOffset: 900 }).addTo(map);
+  applyHeadingTo(m);
+  return m;
+}
+function applyHeadingTo(m) {
+  if (!m) return;
+  var el = m.getElement && m.getElement(); if (!el) return;
+  var cone = el.querySelector('.me-cone'); if (!cone) return;
+  if (S.heading == null) { cone.style.opacity = '0'; return; }
+  cone.style.opacity = '1';
+  cone.style.transform = 'rotate(' + S.headRot + 'deg)';
+}
+window.__heading = function (h) {
+  if (h == null || !isFinite(h)) { S.heading = null; }
+  else {
+    // en kısa yoldan dön (359° → 1° arası tam tur atmasın)
+    var cur = ((S.headRot % 360) + 360) % 360, d = ((h - cur + 540) % 360) - 180;
+    S.headRot += d; S.heading = h;
+  }
+  applyHeadingTo(SM.me); applyHeadingTo(mapLayers.me);
+};
+/* web: tarayıcı pusulası (Android Chrome: deviceorientationabsolute, iPhone: webkitCompassHeading) */
+var webHeading = { on: false, handler: null, asked: false };
+function webHeadingStart(fromGesture) {
+  if (hasBridge || webHeading.on) return;
+  var D = window.DeviceOrientationEvent; if (!D) return;
+  function attach() {
+    webHeading.handler = function (e) {
+      var h = null;
+      if (typeof e.webkitCompassHeading === 'number') h = e.webkitCompassHeading;
+      else if (e.absolute !== false && typeof e.alpha === 'number') {
+        var scr = (screen.orientation && screen.orientation.angle) || window.orientation || 0;
+        h = (360 - e.alpha + scr) % 360;
+      }
+      if (h != null && (S.heading == null || Math.abs(((h - S.heading) + 540) % 360 - 180) >= 2)) window.__heading(h);
+    };
+    window.addEventListener('ondeviceorientationabsolute' in window ? 'deviceorientationabsolute' : 'deviceorientation', webHeading.handler, true);
+    webHeading.on = true;
+  }
+  if (typeof D.requestPermission === 'function') { // iPhone: izin sadece dokunuşla istenebilir
+    if (webHeading.granted) return attach();
+    if (!fromGesture) return;
+    D.requestPermission().then(function (r) { if (r === 'granted') { webHeading.granted = true; attach(); } }).catch(function () {});
+  } else attach();
+}
+function webHeadingStop() {
+  if (!webHeading.on) return;
+  window.removeEventListener('deviceorientationabsolute', webHeading.handler, true);
+  window.removeEventListener('deviceorientation', webHeading.handler, true);
+  webHeading.on = false; window.__heading(null);
+}
+var headingOn = false;
+function syncHeading(fromGesture) {
+  var need = !!S.mapLine || !$('stopsScreen').hidden;
+  if (need === headingOn && !(need && fromGesture && !hasBridge && !webHeading.on)) return;
+  headingOn = need;
+  if (hasBridge) { try { need ? window.Android.startHeading() : window.Android.stopHeading(); } catch (e) {} if (!need) window.__heading(null); }
+  else { need ? webHeadingStart(fromGesture) : webHeadingStop(); }
+}
 function updateUserDot() {
   if (!S.map || !S.pos) return;
   var ll = [S.pos.lat, S.pos.lng];
   if (mapLayers.me) mapLayers.me.setLatLng(ll);
-  else mapLayers.me = L.circleMarker(ll, { radius: 7, color: '#fff', weight: 3, fillColor: '#2563EB', fillOpacity: 1 }).addTo(S.map);
+  else mapLayers.me = makeMe(ll, S.map);
 }
 var pathSeq = 0;
 function loadPath(l, first) {
@@ -1163,8 +1237,9 @@ function startTimers() {
   S.timer = setInterval(function () { if (S.stop && !S.loading) loadArrivals(); }, REFRESH_MS);
   S.relocTimer = setInterval(function () { if (!S.locBlocked) locate(); }, RELOCATE_MS);
 }
-window.__pause = function () { clearInterval(S.tick); clearInterval(S.timer); clearInterval(S.relocTimer); clearInterval(S.mapTimer); };
+window.__pause = function () { if (!hasBridge) { webHeadingStop(); headingOn = false; } clearInterval(S.tick); clearInterval(S.timer); clearInterval(S.relocTimer); clearInterval(S.mapTimer); };
 window.__resume = function () {
+  if (!hasBridge) setTimeout(function () { syncHeading(); }, 0);
   startTimers();
   if (!S.locBlocked && (!S.pos || Date.now() - S.pos.t > 60000)) locate();
   if (S.stop && !S.loading) loadArrivals();
@@ -1220,10 +1295,11 @@ $('diagTest').onclick = function () {
   });
 };
 $('backBtn').onclick = closeMap;
-document.querySelectorAll('.tab').forEach(function (b) { b.onclick = function () { if (S.tab !== b.dataset.tab) showTab(b.dataset.tab); }; });
+document.querySelectorAll('.tab').forEach(function (b) { b.onclick = function () { if (S.tab !== b.dataset.tab) showTab(b.dataset.tab); syncHeading(true); }; });
 $('sheetClose').onclick = closeSheet;
 $('sheetAll').onclick = function () { closeSheet(); showTab('home'); };
 $('locBtn').onclick = function () {
+  syncHeading(true);
   if (S.pos && SM.map) SM.map.setView([S.pos.lat, S.pos.lng], Math.max(SM.map.getZoom(), 16));
   locate();
 };

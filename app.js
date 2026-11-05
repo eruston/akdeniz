@@ -156,6 +156,7 @@ var DARK = (function () {
 })();
 document.documentElement.classList.add(DARK ? 'dark' : 'light');
 
+var REDUCED = !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
 /* ---------- yardımcılar ---------- */
 function $(id) { return document.getElementById(id); }
 function el(tag, cls, text) { var e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; }
@@ -746,8 +747,10 @@ function timeLabel(a) {
   return { big: String(m), unit: 'dk' };
 }
 function waitText(b) { return 'Otobüs ' + (isFinite(b.sd) && b.sd > 0 ? b.sd + ' durak önce ' : '') + 'bekliyor'; }
-function lineRow(l) {
+var PREV_BIG = {};
+function lineRow(l, ctx) {
   var row = el('div', 'row'); row.setAttribute('role', 'button');
+  if (ctx === 'list') row.dataset.k = l.key;
   var badge = el('div', 'badge', l.code);
   if (l.color) { badge.style.background = l.color; badge.style.color = inkFor(l.color); }
   row.appendChild(badge);
@@ -793,6 +796,7 @@ function lineRow(l) {
     var t = timeLabel(first);
     if (first.live) { var sig = el('span', 'sigwrap'); sig.innerHTML = SIGNAL_SVG; lead.appendChild(sig); }
     var big = el('b', t.big === 'Şimdi' ? 'now' : (t.unit && +t.big <= 3 ? 'soon' : ''), t.big);
+    if (ctx === 'list') { if (PREV_BIG[l.key] != null && PREV_BIG[l.key] !== t.big && !REDUCED) big.classList.add('tick'); PREV_BIG[l.key] = t.big; }
     if (t.big.length > 3) big.className += ' small';
     lead.appendChild(big);
     if (t.unit) lead.appendChild(el('span', 'unit', t.unit));
@@ -843,6 +847,9 @@ function renderList() {
   var lines = S.lines.slice().sort(function (a, b) { return score(a) - score(b); });
   var favs = lines.filter(function (l) { return isFav(l.code); });
   var rest = lines.filter(function (l) { return !isFav(l.code); });
+  // FLIP: satırların eski yerini not al, yeniden çizince oradan kaydır
+  var prevTop = {}, hadRows = false;
+  if (!REDUCED) L.querySelectorAll('.row[data-k]').forEach(function (r) { prevTop[r.dataset.k] = r.getBoundingClientRect().top; hadRows = true; });
   L.innerHTML = '';
   if (S.filter === 'fav') {
     if (!favs.length) {
@@ -850,10 +857,20 @@ function renderList() {
       st.appendChild(el('h2', null, 'Takip ettiğin hat yok'));
       st.appendChild(el('div', null, 'Bu duraktaki bir hattın yanındaki ★ işaretine dokunarak takibe al.'));
       L.appendChild(st);
-    } else favs.forEach(function (l) { L.appendChild(lineRow(l)); });
+    } else favs.forEach(function (l) { L.appendChild(lineRow(l, 'list')); });
   } else {
-    if (favs.length) { L.appendChild(el('div', 'section', 'Takip ettiklerin')); favs.forEach(function (l) { L.appendChild(lineRow(l)); }); }
-    if (rest.length) { if (favs.length) L.appendChild(el('div', 'section', 'Diğer hatlar')); rest.forEach(function (l) { L.appendChild(lineRow(l)); }); }
+    if (favs.length) { L.appendChild(el('div', 'section', 'Takip ettiklerin')); favs.forEach(function (l) { L.appendChild(lineRow(l, 'list')); }); }
+    if (rest.length) { if (favs.length) L.appendChild(el('div', 'section', 'Diğer hatlar')); rest.forEach(function (l) { L.appendChild(lineRow(l, 'list')); }); }
+  }
+  if (hadRows) {
+    var moved = [];
+    L.querySelectorAll('.row[data-k]').forEach(function (r) {
+      var p0 = prevTop[r.dataset.k];
+      if (p0 == null) { r.classList.add('enter'); return; }
+      var dy = p0 - r.getBoundingClientRect().top;
+      if (Math.abs(dy) > 2) { r.style.transition = 'none'; r.style.transform = 'translateY(' + dy + 'px)'; moved.push(r); }
+    });
+    if (moved.length) { void L.offsetHeight; moved.forEach(function (r) { r.style.transition = 'transform .38s cubic-bezier(.2,.8,.2,1)'; r.style.transform = ''; }); }
   }
   var up = $('updated');
   up.classList.toggle('warn', !!S.err);
@@ -993,7 +1010,7 @@ function openMap(l) {
   }
   setTimeout(function () { S.map.invalidateSize(); }, 50);
   Object.keys(mapLayers).forEach(function (k) { S.map.removeLayer(mapLayers[k]); });
-  mapLayers = {}; S.route = null; S.busMk = {};
+  mapLayers = {}; S.route = null; S.busMk = {}; S.routeStops = []; S.stopAlong = null; S.progKey = null;
   mapLayers.stop = L.circleMarker([S.stop.lat, S.stop.lng], { radius: 9, color: '#fff', weight: 3, fillColor: '#0A5A73', fillOpacity: 1 })
     .bindTooltip(S.stop.name, { permanent: false }).addTo(S.map);
   updateUserDot();
@@ -1070,6 +1087,42 @@ function busIcon(col, ink) {
     '<div class="bm-dir"><svg viewBox="0 0 60 60" width="60" height="60"><path d="M30 1.5 37.5 11.5h-15z" fill="' + col + '" stroke="#fff" stroke-width="2" stroke-linejoin="round"/></svg></div>' +
     '<div class="bm-body">' + BUS_GLYPH + '</div><div class="bm-tag"></div></div>' });
 }
+/* İlerleme: otobüsün bulunduğu yerden senin durağına kadar olan güzergâh parlak, kalan hat soluk;
+   aradaki duraklar belirgin, geçilmiş ve sonraki duraklar küçük. Otobüs kaydıkça çizgi de kısalır. */
+function updateProgress(a) {
+  var R = S.route, sa = S.stopAlong, pr = mapLayers.prog;
+  if (!pr || !mapLayers.route) return;
+  var on = R && sa != null && a != null && a <= sa + 5;
+  if (!on) {
+    if (S.progKey !== 'off') { pr.setLatLngs([]); mapLayers.route.setStyle({ opacity: .75 }); styleRouteStops(null, null); S.progKey = 'off'; }
+    return;
+  }
+  var pts = [routeAt(a).ll];
+  for (var i = 0; i < R.cum.length; i++) if (R.cum[i] > a && R.cum[i] < sa) pts.push(R.pts[i]);
+  pts.push(routeAt(sa).ll);
+  pr.setLatLngs(pts);
+  var key = 'on|' + Math.round(a / 25);
+  if (S.progKey !== key) {
+    if (S.progKey === 'off' || S.progKey == null) { mapLayers.route.setStyle({ opacity: .3 }); drawIn(pr); }
+    styleRouteStops(a, sa); S.progKey = key;
+  }
+}
+/* çizgiyi baştan sona çizilerek göster (gerçek uzunluğuna göre), bitince kesik çizgi ayarını kaldır */
+function drawIn(line) {
+  var e = line.getElement && line.getElement(); if (!e || REDUCED || !e.getTotalLength) return;
+  var len = e.getTotalLength(); if (!(len > 10)) return;
+  e.style.transition = 'none'; e.style.strokeDasharray = len + ' ' + len; e.style.strokeDashoffset = len;
+  void e.getBoundingClientRect();
+  e.style.transition = 'stroke-dashoffset .9s ease-out'; e.style.strokeDashoffset = '0';
+  setTimeout(function () { e.style.transition = ''; e.style.strokeDasharray = ''; e.style.strokeDashoffset = ''; }, 1000);
+}
+function styleRouteStops(a, sa) {
+  (S.routeStops || []).forEach(function (s) {
+    var inR = a != null && s.along != null && s.along >= a - 5 && s.along <= sa + 5;
+    if (s.inR === inR) return; s.inR = inR;
+    s.m.setStyle(inR ? { radius: 5.5, weight: 2.5, opacity: 1, fillOpacity: 1 } : (a == null ? { radius: 4, weight: 2, opacity: 1, fillOpacity: 1 } : { radius: 3.5, weight: 1.5, opacity: .5, fillOpacity: .6 }));
+  });
+}
 function busEl(m) { var e = m.getElement && m.getElement(); return e ? e.firstChild : null; }
 function setBusDir(m, brg) {
   var e = busEl(m); if (!e) return;
@@ -1100,6 +1153,7 @@ function moveBus(m, to, ms) {
       var cur = sa.along + (sb.along - sa.along) * k, q = routeAt(cur);
       m._along = cur; // yarıda yeni konum gelirse buradan devam etsin
       m.setLatLng(q.ll);
+      if (m._isNext) updateProgress(cur);
       if (Math.abs(((q.brg - lastBrg) + 540) % 360 - 180) > 4) { lastBrg = q.brg; setBusDir(m, q.brg); }
     } else m.setLatLng([a[0] + (target[0] - a[0]) * k, a[1] + (target[1] - a[1]) * k]);
     if (k < 1) m._anim = requestAnimationFrame(f);
@@ -1462,17 +1516,48 @@ function selectStopFromStops(st) {
     S.stop = s; S.manual = s !== S.stops[0]; S.lines = []; S.err = null; S.lastOk = 0;
     renderHeader(); renderList(); loadArrivals();
   }
-  $('stopSheet').hidden = false; $('stopsHint').hidden = true;
+  var sh = $('stopSheet');
+  clearTimeout(SM.closeT); sh.classList.remove('closing'); sh.style.transform = '';
+  if (sh.hidden && !REDUCED) { sh.classList.remove('enter'); void sh.offsetWidth; sh.classList.add('enter'); }
+  sh.hidden = false; $('stopsHint').hidden = true;
   renderSheet(); drawStops(true);
   // seçilen durak kartın altında kalmasın
   var pt = SM.map.latLngToContainerPoint([st.lat, st.lng]), h = SM.map.getSize().y;
   if (pt.y > h * 0.45) SM.map.panBy([0, pt.y - h * 0.3]);
 }
 function closeSheet() {
-  var prev = SM.selId; $('stopSheet').hidden = true; SM.selId = null;
+  var sh = $('stopSheet'), prev = SM.selId; SM.selId = null;
   if (prev && SM.markers[prev]) { SM.layer.removeLayer(SM.markers[prev].m); delete SM.markers[prev]; }
+  if (sh.hidden) return;
+  function done() { sh.hidden = true; sh.classList.remove('closing', 'enter'); sh.style.transform = ''; drawStops(true); }
+  if (REDUCED) return done();
+  sh.style.transform = ''; sh.classList.add('closing');
+  clearTimeout(SM.closeT); SM.closeT = setTimeout(done, 240);
   drawStops(true);
 }
+/* kartı tutamaktan ya da başlıktan aşağı sürükleyince kapat */
+(function () {
+  var sh = $('stopSheet'), y0 = null, t0 = 0, dy = 0;
+  function start(e) { if (sh.hidden) return; y0 = e.touches[0].clientY; t0 = Date.now(); dy = 0; sh.classList.add('dragging'); }
+  function move(e) {
+    if (y0 == null) return;
+    dy = Math.max(0, e.touches[0].clientY - y0);
+    sh.style.transform = 'translateY(' + dy + 'px)';
+    if (dy > 4 && e.cancelable) e.preventDefault();
+  }
+  function end() {
+    if (y0 == null) return;
+    sh.classList.remove('dragging'); y0 = null;
+    var v = dy / Math.max(1, Date.now() - t0);
+    if (dy > 90 || (dy > 30 && v > 0.5)) closeSheet(); else sh.style.transform = '';
+  }
+  ['.grip', '.sheet-head'].forEach(function (q) {
+    var h = sh.querySelector(q); if (!h) return;
+    h.addEventListener('touchstart', start, { passive: true });
+    h.addEventListener('touchmove', move, { passive: false });
+    h.addEventListener('touchend', end); h.addEventListener('touchcancel', end);
+  });
+})();
 function renderSheet() {
   var sh = $('stopSheet'); if (!sh || sh.hidden || !S.stop) return;
   $('sheetName').textContent = S.stop.name;
@@ -1605,16 +1690,22 @@ function drawPath(l, p, fit) {
     if (mapLayers.route) S.map.removeLayer(mapLayers.route);
     mapLayers.route = L.polyline(pts, { color: col, weight: 5, opacity: .75 }).addTo(S.map);
     S.route = buildRoute(pts);
+    if (mapLayers.prog) S.map.removeLayer(mapLayers.prog);
+    // otobüsten durağına kalan yol: parlak ve kalın; açılışta çizilerek belirsin
+    mapLayers.prog = L.polyline([], { color: col, weight: 8, opacity: 1, lineCap: 'round', className: 'route-prog' }).addTo(S.map);
+    S.progKey = null;
     mapLayers.stop.bringToFront();
   }
+  S.stopAlong = (function () { var q = snapRoute(S.stop.lat, S.stop.lng); return q && q.d < 120 ? q.along : null; })();
   if (p.busStopList && p.busStopList.length) {
     if (mapLayers.stops) S.map.removeLayer(mapLayers.stops);
-    var sg = L.layerGroup();
+    var sg = L.layerGroup(); S.routeStops = [];
     p.busStopList.forEach(function (s) {
       var la = num(s.lat), lo = num(s.lng);
       if (!isFinite(la) || !isFinite(lo) || sid(s) === S.stop.id) return;
       var st = { id: sid(s), name: sname(s) || ('Durak ' + sid(s)), lat: la, lng: lo, routes: '' };
-      L.circleMarker([la, lo], { radius: 4, color: col, weight: 2, fillColor: '#fff', fillOpacity: 1, interactive: false }).addTo(sg);
+      var dm = L.circleMarker([la, lo], { radius: 4, color: col, weight: 2, fillColor: '#fff', fillOpacity: 1, interactive: false }).addTo(sg);
+      var sq = snapRoute(la, lo); S.routeStops.push({ m: dm, along: sq && sq.d < 120 ? sq.along : null, inR: null });
       // parmakla kolay basılsın diye görünmez, geniş bir dokunma alanı
       L.circleMarker([la, lo], { radius: 16, stroke: false, fillOpacity: 0 })
         .on('click', function () { selectStopFromMap(st); }).addTo(sg);
@@ -1624,6 +1715,7 @@ function drawPath(l, p, fit) {
   }
   S.lastPath = p;
   S.pathOkAt = Date.now(); S.pathErr = false;
+  S.progKey = null;
   var nextLL = drawBuses(l);
   if (fit) {
     var bounds = L.latLngBounds([[S.stop.lat, S.stop.lng]]);
@@ -1639,7 +1731,7 @@ function drawBuses(l) {
   var p = S.lastPath; if (!p || !S.map) return null;
   var col = l.color || '#0A5A73', ink = inkFor(col), now = Date.now();
   if (!mapLayers.buses) { mapLayers.buses = L.layerGroup().addTo(S.map); S.busMk = {}; }
-  var seen = {}, nextLL = null, n = 0, live = S.live || {};
+  var seen = {}, nextLL = null, n = 0, live = S.live || {}, nextMk = null;
   var nb = liveFresh() ? l.buses[0] : null, nextId = nb ? String(nb.id || nb.plate) : null;
   (p.busList || []).forEach(function (b) {
     var la = num(b.lat), lo = num(b.lng); if (!isFinite(la) || !isFinite(lo)) return;
@@ -1673,7 +1765,10 @@ function drawBuses(l) {
       var te = e.querySelector('.bm-tag'); if (te.textContent !== tag) te.textContent = tag;
     }
     m.setZIndexOffset(isNext ? 1000 : 0); m.setOpacity(1);
+    m._isNext = isNext && !frozen;
+    if (m._isNext) nextMk = m;
   });
+  updateProgress(nextMk ? nextMk._along : null);
   Object.keys(S.busMk).forEach(function (k) {
     if (seen[k]) return;
     var m = S.busMk[k], e = busEl(m); delete S.busMk[k];
@@ -1713,7 +1808,7 @@ function mapStaleCheck() {
     $('mapMeta').textContent = 'Canlı konum alınamıyor · soluk işaretler ' + clock(new Date(S.pathOkAt)) + ' konumu';
     return;
   }
-  if (mapLayers.buses) { S.map.removeLayer(mapLayers.buses); mapLayers.buses = null; S.busMk = {}; }
+  if (mapLayers.buses) { S.map.removeLayer(mapLayers.buses); mapLayers.buses = null; S.busMk = {}; updateProgress(null); }
   $('mapMeta').textContent = 'Canlı konum alınamıyor · otobüsler gösterilmiyor';
 }
 function refreshMapCard() {

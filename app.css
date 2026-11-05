@@ -151,7 +151,7 @@ h1{margin:4px 0 2px;font-size:23px;line-height:1.2;font-weight:700;letter-spacin
 .stop-ico{background:none;border:0;display:grid;place-items:center}
 .stop-pin{width:20px;height:20px;border-radius:6px;display:grid;place-items:center;background:#1E6FD9;color:#fff;
   border:1.5px solid #fff;box-shadow:0 1px 3px rgba(0,0,0,.35)}
-.stop-pin.sel{transform:scale(1.35);background:var(--soon)}
+.stop-pin.sel{transform:scale(1.35);background:var(--soon);animation:pin-pop .4s cubic-bezier(.3,1.6,.5,1)}
 .sheet{position:absolute;left:0;right:0;bottom:0;max-height:62%;overflow-y:auto;z-index:1500;background:var(--bg);
   border-radius:20px 20px 0 0;box-shadow:0 -4px 18px rgba(0,0,0,.3);padding:6px 0 12px}
 .grip{width:40px;height:4px;border-radius:2px;background:var(--line);margin:4px auto 6px}
@@ -240,3 +240,16 @@ h1{margin:4px 0 2px;font-size:23px;line-height:1.2;font-weight:700;letter-spacin
 .res .pin svg{width:18px;height:18px}
 .diag-btns{flex-wrap:wrap}
 
+
+/* ---------- animasyonlar (1.37) ---------- */
+@keyframes pin-pop{0%{transform:scale(1)}55%{transform:scale(1.7)}100%{transform:scale(1.35)}}
+.row.enter{animation:row-in .35s ease-out}
+@keyframes row-in{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
+.arr-lead b.tick{display:inline-block;animation:num-tick .45s ease-out}
+@keyframes num-tick{0%{opacity:0;transform:translateY(-45%)}100%{opacity:1;transform:none}}
+.sheet{transition:transform .24s cubic-bezier(.2,.8,.2,1)}
+.sheet.enter{animation:sheet-up .3s cubic-bezier(.2,.8,.2,1)}
+.sheet.closing{transform:translateY(110%)}
+.sheet.dragging{transition:none}
+@keyframes sheet-up{from{transform:translateY(100%)}to{transform:none}}
+@media (prefers-reduced-motion:reduce){.row.enter,.arr-lead b.tick,.sheet.enter,.stop-pin.sel{animation:none}.sheet{transition:none}}

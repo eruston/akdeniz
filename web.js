@@ -16,6 +16,21 @@
     });
   } catch (e) {}
 
+  // Ziyaret sayacı (yalnız yayındaki sitede): hits.konst.fish — hesapsız, sadece sayı tutar.
+  // "cihaz": her telefon ilk girişinde bir kez; "acilis": her açılışta. Sayılar sayac.html'de.
+  if (location.hostname === 'eruston.github.io') {
+    var HIT = 'https://hits.konst.fish/api/count/incr/badge.svg?url=';
+    var hit = function (key, done) {
+      var im = new Image();
+      if (done) im.onload = done;
+      im.src = HIT + encodeURIComponent('https://eruston.github.io/akdeniz/' + key) + '&t=' + Date.now();
+    };
+    try {
+      if (!localStorage.getItem('akdeniz-sayildi')) hit('cihaz', function () { try { localStorage.setItem('akdeniz-sayildi', String(Date.now())); } catch (e) {} });
+    } catch (e) {}
+    hit('acilis');
+  }
+
   // Çevrimdışı açılış için uygulama kabuğunu önbelleğe al
   if ('serviceWorker' in navigator) {
     window.addEventListener('load', function () { navigator.serviceWorker.register('sw.js').catch(function () {}); });

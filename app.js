@@ -135,7 +135,7 @@ function apiRaw(path, params) {
   return new Promise(function (resolve, reject) {
     var id = 'r' + (++reqSeq);
     pending[id] = { resolve: resolve, reject: reject };
-    setTimeout(function () { if (pending[id]) { delete pending[id]; reject(new Error('Zaman aşımı')); } }, 25000);
+    setTimeout(function () { if (pending[id]) { delete pending[id]; reject(new Error('Zaman aşımı')); } }, 15000);
     window.Android.get(id, url);
   });
 }
@@ -360,26 +360,67 @@ function allStopsCached() {
     return list;
   });
 }
+/* Telefondaki durak listesinden (tarife verisi) yakındakiler — 4600 durak, isim biçimlendirmesi yalnız seçilenlere */
+function ttNearRaw(p, r) {
+  if (!ttHas()) return [];
+  var out = [];
+  for (var i = 0; i < TT.stops.length; i++) {
+    var st = TT.stops[i];
+    if (Math.abs(st[2] - p.lat) > 0.03 || Math.abs(st[3] - p.lng) > 0.04) continue;
+    if (dist(p.lat, p.lng, st[2], st[3]) < r) out.push(ttStopObj(i));
+  }
+  return out;
+}
+var findSeq = 0;
 function findStops() {
   var p = S.pos; if (!p) return;
+  var my = ++findSeq, settled = false;
   spin(true);
   if (!S.stops.length) $('stopName').textContent = 'Durak aranıyor…';
-  function ttNear() { return ttAllStops().filter(function (s) { return dist(p.lat, p.lng, s.lat, s.lng) < 3000; }).slice(); }
+  var local = ttNearRaw(p, 3000);
+  // sunucu yavaşsa/asılı kalırsa bekletme: 3 sn sonra telefondaki listeyle devam, sunucu cevabı gelince listeyi tamamla
+  var grace = local.length ? setTimeout(function () { if (!settled && my === findSeq) { settled = true; useStops(local, p); } }, 3000) : null;
   api('nearest/place', { lat: p.lat.toFixed(6), lng: p.lng.toFixed(6) }).then(function (r) {
     var list = (r.stopList || []).map(mapStop).filter(function (s) { return s.id && isFinite(s.lat); });
     if (list.length) return list;
-    var t = ttNear(); if (t.length) return t;
+    if (local.length) return local;
     return allStopsCached().then(function (all) {
       return all.map(function (a) { return { id: a[0], name: nice(a[1]), lat: a[2], lng: a[3], routes: '' }; });
     });
   }, function (e) {
-    var t = ttNear(); if (t.length) return t; // sunucu yoksa telefondaki durak listesi
+    if (local.length) return local; // sunucu yoksa telefondaki durak listesi
     throw e;
   }).then(function (list) {
-    list.forEach(function (s) { s.d = dist(p.lat, p.lng, s.lat, s.lng); });
-    list.sort(function (a, b) { return a.d - b.d; });
-    var seen = {};
-    S.stops = list.filter(function (s) { if (seen[s.id]) return false; seen[s.id] = 1; return true; }).slice(0, 6);
+    if (my !== findSeq) return; // bu arada daha yeni bir konum geldi
+    clearTimeout(grace);
+    if (settled) { mergeStops(list, p); return; }
+    settled = true; useStops(list, p);
+  }).catch(function (e) {
+    if (my !== findSeq || settled) return;
+    settled = true; clearTimeout(grace);
+    spin(false);
+    if (!S.stops.length) {
+      $('stopName').textContent = 'Bağlantı sorunu';
+      showState('Durak bilgisi alınamadı', 'İnternet bağlantını kontrol edip tekrar dene.', [{ label: 'Tekrar dene', fn: findStops }]);
+    }
+  });
+}
+function nearestSix(list, p) {
+  list.forEach(function (s) { s.d = dist(p.lat, p.lng, s.lat, s.lng); });
+  list.sort(function (a, b) { return a.d - b.d; });
+  var seen = {};
+  return list.filter(function (s) { if (seen[s.id]) return false; seen[s.id] = 1; return true; }).slice(0, 6);
+}
+/* geç gelen sunucu cevabı: seçili durağı değiştirmeden yakın durak listesini tamamla */
+function mergeStops(list, p) {
+  var cur = S.stop;
+  S.stops = nearestSix(S.stops.concat(list), p);
+  if (cur && !S.stops.some(function (s) { return s.id === cur.id; })) S.stops.push(cur);
+  addNear(list);
+  renderHeader();
+}
+function useStops(list, p) {
+    S.stops = nearestSix(list, p);
     if (!S.stops.length || S.stops[0].d > 5000) {
       spin(false);
       $('stopName').textContent = 'Yakında durak yok';
@@ -398,13 +439,6 @@ function findStops() {
     renderHeader();
     if (changed) { S.lines = []; S.err = null; renderList(); }
     loadArrivals();
-  }).catch(function (e) {
-    spin(false);
-    if (!S.stops.length) {
-      $('stopName').textContent = 'Bağlantı sorunu';
-      showState('Durak bilgisi alınamadı', 'İnternet bağlantını kontrol edip tekrar dene.', [{ label: 'Tekrar dene', fn: findStops }]);
-    }
-  });
 }
 function pickStop(s) {
   if (S.stop && S.stop.id === s.id) return;
@@ -438,7 +472,7 @@ function loadArrivals() {
     if (!S.lines.length || S.ttFallback) {
       var tl = ttLinesForStop(stop);
       if (tl.length) { S.lines = tl; S.ttFallback = true; }
-    }
+    } else refreshPlans();
     renderList();
     if (S.mapLine) refreshMapCard();
   });
@@ -529,6 +563,9 @@ function queueSchedule(line, stop) {
   var ck = line.code + '|' + (line.dir || '?') + '|' + stop.id + '|' + todayKey();
   line.ck = ck;
   if (S.sched[ck] !== undefined) { applyPlan(line); return; }
+  // Gömülü tarife geçerliyse ve bu hat bu duraktan geçiyorsa sunucuya hiç sorma (kalabalık durakta 40 istek eder)
+  var tt = ttArrivals(stop.id, line.code, line.dir);
+  if (tt) { S.sched[ck] = tt; applyPlan(line); return; }
   var cached = store.get('sch:' + ck, undefined);
   if (cached !== undefined) { S.sched[ck] = cached; applyPlan(line); return; }
   S.sched[ck] = null;
@@ -586,6 +623,7 @@ function extractTimes(p, stopId) {
   times.sort(function (a, b) { return a - b; });
   return { off: off, times: times, head: '' };
 }
+function refreshPlans() { S.lines.forEach(function (l) { if (l.ck) applyPlan(l); }); }
 function applyPlan(line) {
   var d = S.sched[line.ck];
   if (!d) { line.plan = d === false ? { none: true } : null; return; }
@@ -755,6 +793,7 @@ function renderList() {
   renderSheet();
   var L = $('list');
   if (!S.stop) return;
+  if ($('home').hidden) return; // harita/duraklar ekranındayken görünmeyen listeyi boşuna çizme; sekmeye dönünce çizilir
   if (!S.lines.length) {
     if (S.err) return showState('Otobüs bilgisi alınamadı', 'Bağlantını kontrol edip tekrar dene. (' + S.err + ')', [{ label: 'Tekrar dene', fn: loadArrivals }]);
     if (S.loading || !S.lastOk) {
@@ -919,7 +958,7 @@ function openMap(l) {
   }
   setTimeout(function () { S.map.invalidateSize(); }, 50);
   Object.keys(mapLayers).forEach(function (k) { S.map.removeLayer(mapLayers[k]); });
-  mapLayers = {};
+  mapLayers = {}; S.route = null; S.busMk = {};
   mapLayers.stop = L.circleMarker([S.stop.lat, S.stop.lng], { radius: 9, color: '#fff', weight: 3, fillColor: '#0A5A73', fillOpacity: 1 })
     .bindTooltip(S.stop.name, { permanent: false }).addTo(S.map);
   updateUserDot();
@@ -950,19 +989,89 @@ function noteLive(r) {
   });
   Object.keys(S.live).forEach(function (k) { if (t - S.live[k].t > 120000) delete S.live[k]; });
 }
-/* işareti eski yerinden yenisine kaydırarak götür (zıplamasın) */
-function glide(m, to, ms) {
-  var from = m.getLatLng();
-  if (from.lat === to[0] && from.lng === to[1]) return;
+/* ---------- otobüs işaretleri: yol üstünde hareket ----------
+   Hat çizgisi (güzergâh) metreye çevrilir; otobüs konumu çizgiye oturtulur (en fazla 60 m sapma),
+   iki konum arasında güzergâhı izleyerek kayar, yön oku yolun yönüne döner. */
+function buildRoute(pts) {
+  if (!pts || pts.length < 2) return null;
+  var k = Math.cos(pts[0][0] * Math.PI / 180) * 111320, xy = [], cum = [0];
+  for (var i = 0; i < pts.length; i++) xy.push([pts[i][1] * k, pts[i][0] * 110540]);
+  for (i = 1; i < xy.length; i++) cum.push(cum[i - 1] + Math.hypot(xy[i][0] - xy[i - 1][0], xy[i][1] - xy[i - 1][1]));
+  return { pts: pts, xy: xy, cum: cum, k: k, len: cum[cum.length - 1] };
+}
+function segBearing(R, i) {
+  var a = R.xy[i], b = R.xy[Math.min(i + 1, R.xy.length - 1)];
+  return (Math.atan2(b[0] - a[0], b[1] - a[1]) * 180 / Math.PI + 360) % 360;
+}
+/* noktayı güzergâha izdüşür: {along: baştan metre, d: sapma metre, brg: yön, ll: çizgi üstündeki nokta} */
+function snapRoute(la, lo) {
+  var R = S.route; if (!R) return null;
+  var x = lo * R.k, y = la * 110540, best = null;
+  for (var i = 0; i < R.xy.length - 1; i++) {
+    var a = R.xy[i], b = R.xy[i + 1], dx = b[0] - a[0], dy = b[1] - a[1], L2 = dx * dx + dy * dy;
+    var t = L2 ? Math.max(0, Math.min(1, ((x - a[0]) * dx + (y - a[1]) * dy) / L2)) : 0;
+    var px = a[0] + dx * t, py = a[1] + dy * t, d = Math.hypot(x - px, y - py);
+    if (!best || d < best.d) best = { d: d, i: i, t: t, px: px, py: py };
+  }
+  if (!best) return null;
+  return { d: best.d, along: R.cum[best.i] + (R.cum[best.i + 1] - R.cum[best.i]) * best.t, brg: segBearing(R, best.i),
+    ll: [best.py / 110540, best.px / R.k] };
+}
+function routeAt(along) {
+  var R = S.route, c = R.cum, lo = 0, hi = c.length - 1;
+  along = Math.max(0, Math.min(R.len, along));
+  while (hi - lo > 1) { var m = (lo + hi) >> 1; if (c[m] <= along) lo = m; else hi = m; }
+  var t = c[hi] > c[lo] ? (along - c[lo]) / (c[hi] - c[lo]) : 0, a = R.pts[lo], b = R.pts[hi];
+  return { ll: [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t], brg: segBearing(R, lo) };
+}
+function llBearing(a, b) {
+  var k = Math.cos(a[0] * Math.PI / 180);
+  return (Math.atan2((b[1] - a[1]) * k, b[0] - a[0]) * 180 / Math.PI + 360) % 360;
+}
+function busIcon(col, ink) {
+  var BUS_GLYPH = STOP_SVG.replace('width="10" height="10"', 'width="16" height="16"');
+  return L.divIcon({ className: 'bus-ico', iconSize: [0, 0], html:
+    '<div class="bm" style="--c:' + col + ';--ink:' + ink + '"><div class="bm-pulse"></div>' +
+    '<div class="bm-dir"><svg viewBox="0 0 60 60" width="60" height="60"><path d="M30 1.5 37.5 11.5h-15z" fill="' + col + '" stroke="#fff" stroke-width="2" stroke-linejoin="round"/></svg></div>' +
+    '<div class="bm-body">' + BUS_GLYPH + '</div><div class="bm-tag"></div></div>' });
+}
+function busEl(m) { var e = m.getElement && m.getElement(); return e ? e.firstChild : null; }
+function setBusDir(m, brg) {
+  var e = busEl(m); if (!e) return;
+  if (brg == null) { e.classList.add('nodir'); return; }
+  e.classList.remove('nodir');
+  if (m._rot == null) m._rot = brg;
+  else { var cur = ((m._rot % 360) + 360) % 360; m._rot += ((brg - cur + 540) % 360) - 180; }
+  e.querySelector('.bm-dir').style.transform = 'rotate(' + m._rot.toFixed(1) + 'deg)';
+}
+function moveBus(m, to, ms) {
+  // aynı hedef tekrar geldiyse (hat sorgusu aynı konumu yeniden verdi) süren kaymayı bozma
+  if (m._tgt && Math.abs(m._tgt[0] - to[0]) < 1e-5 && Math.abs(m._tgt[1] - to[1]) < 1e-5) return false;
+  m._tgt = to;
+  var from = m.getLatLng(), a = [from.lat, from.lng];
   if (m._anim) { cancelAnimationFrame(m._anim); m._anim = null; }
-  if (document.hidden || dist(from.lat, from.lng, to[0], to[1]) > 1500) { m.setLatLng(to); return; }
-  var t0 = performance.now();
+  var sb = snapRoute(to[0], to[1]), onB = sb && sb.d < 60, target = onB ? sb.ll : to;
+  if (Math.abs(target[0] - a[0]) < 1e-7 && Math.abs(target[1] - a[1]) < 1e-7) return;
+  var far = dist(a[0], a[1], target[0], target[1]);
+  if (document.hidden || far > 1500) { m.setLatLng(target); m._along = onB ? sb.along : null; setBusDir(m, onB ? sb.brg : null); return; }
+  var sa = m._along != null ? { along: m._along } : (function () { var q = snapRoute(a[0], a[1]); return q && q.d < 60 ? q : null; })();
+  // güzergâh boyunca ilerliyorsa (geri değil, makul uzunlukta) yolu izle; değilse düz kay
+  var usePath = onB && sa && sb.along >= sa.along - 5 && sb.along - sa.along <= far * 3 + 150;
+  var t0 = performance.now(), lastBrg = -999;
+  if (!usePath) { m._along = null; if (far > 8) setBusDir(m, llBearing(a, target)); }
   function f(now) {
     var k = Math.min(1, (now - t0) / ms);
-    m.setLatLng([from.lat + (to[0] - from.lat) * k, from.lng + (to[1] - from.lng) * k]);
-    m._anim = k < 1 ? requestAnimationFrame(f) : null;
+    if (usePath) {
+      var cur = sa.along + (sb.along - sa.along) * k, q = routeAt(cur);
+      m._along = cur; // yarıda yeni konum gelirse buradan devam etsin
+      m.setLatLng(q.ll);
+      if (Math.abs(((q.brg - lastBrg) + 540) % 360 - 180) > 4) { lastBrg = q.brg; setBusDir(m, q.brg); }
+    } else m.setLatLng([a[0] + (target[0] - a[0]) * k, a[1] + (target[1] - a[1]) * k]);
+    if (k < 1) m._anim = requestAnimationFrame(f);
+    else { m._anim = null; m._along = onB ? sb.along : null; if (onB && usePath) setBusDir(m, sb.brg); }
   }
   m._anim = requestAnimationFrame(f);
+  return true;
 }
 function closeMap() {
   S.mapLine = null; clearInterval(S.mapTimer);
@@ -1016,7 +1125,8 @@ function searchIndex() {
   (ttHas() ? ttAllStops() : []).forEach(function (st) { stops[st.id] = st; });
   Object.keys(SM.near).forEach(function (k) { if (!stops[k]) stops[k] = SM.near[k]; });
   S.stops.forEach(function (st) { if (!stops[st.id]) stops[st.id] = st; });
-  var sl = Object.keys(stops).map(function (k) { var st = stops[k]; return { st: st, f: fold(st.name) }; });
+  var ids = {};
+  var sl = Object.keys(stops).map(function (k) { var st = stops[k]; ids[k] = 1; return { st: st, f: fold(st.name) }; });
   if (ttHas()) {
     var X = ttIndex();
     Object.keys(X.byCode).forEach(function (code) {
@@ -1031,7 +1141,7 @@ function searchIndex() {
       });
     });
   }
-  SX = { stops: sl, lines: lines };
+  SX = { stops: sl, lines: lines, ids: ids };
   return SX;
 }
 function runSearch(q) {
@@ -1092,7 +1202,7 @@ function runSearch(q) {
         var add = (r.stopList || []).map(mapStop).filter(function (st) { return st.id && isFinite(st.lat); });
         var have = {}; X.stops.forEach(function (o) { have[o.st.id] = 1; });
         var fresh = add.filter(function (st) { return !have[st.id]; });
-        if (fresh.length) { fresh.forEach(function (st) { X.stops.push({ st: st, f: fold(st.name) }); }); runSearch(asked); }
+        if (fresh.length) { fresh.forEach(function (st) { X.ids[st.id] = 1; X.stops.push({ st: st, f: fold(st.name) }); }); runSearch(asked); }
       }, function () {});
     }, 450);
   }
@@ -1176,11 +1286,14 @@ function ensureAllStops() {
 }
 var CELL_LAT = 0.004, CELL_LNG = 0.005;
 function addNear(list) {
-  if (SX && list.length) SX = null;
-  list.forEach(function (s) { if (s && s.id && isFinite(s.lat) && isFinite(s.lng)) SM.near[s.id] = s; });
+  list.forEach(function (s) {
+    if (!s || !s.id || !isFinite(s.lat) || !isFinite(s.lng)) return;
+    SM.near[s.id] = s;
+    if (SX && !SX.ids[s.id]) { SX.ids[s.id] = 1; SX.stops.push({ st: s, f: fold(s.name) }); }
+  });
 }
 function fetchCells() {
-  if (!SM.map || SM.map.getZoom() < 14) return;
+  if (!SM.map || SM.map.getZoom() < ICON_ZOOM) return; // uzak görünümde telefondaki durak listesi yeterli
   var b = SM.map.getBounds().pad(0.15), c = SM.map.getCenter();
   var la0 = Math.floor(b.getSouth() / CELL_LAT), la1 = Math.floor(b.getNorth() / CELL_LAT);
   var lo0 = Math.floor(b.getWest() / CELL_LNG), lo1 = Math.floor(b.getEast() / CELL_LNG);
@@ -1188,11 +1301,11 @@ function fetchCells() {
   var todo = [];
   for (var i = la0; i <= la1; i++) for (var j = lo0; j <= lo1; j++) {
     var k = i + ':' + j, cell = SM.cells[k];
-    if (cell === 'loading' || (typeof cell === 'number' && Date.now() - cell < 10 * 60000)) continue;
+    if (cell === 'loading' || (typeof cell === 'number' && Date.now() - cell < 30 * 60000)) continue;
     todo.push({ k: k, lat: (i + 0.5) * CELL_LAT, lng: (j + 0.5) * CELL_LNG });
   }
   todo.sort(function (x, y) { return dist(c.lat, c.lng, x.lat, x.lng) - dist(c.lat, c.lng, y.lat, y.lng); });
-  SM.queue = todo.slice(0, 9);
+  SM.queue = todo.slice(0, 4);
   SM.queue.forEach(function (t) { SM.cells[t.k] = 'queued'; });
   pumpCells();
 }
@@ -1357,7 +1470,8 @@ var ME_HTML = '<div class="me"><svg class="me-cone" viewBox="0 0 120 120" width=
   '<stop offset="0" style="stop-color:var(--cone);stop-opacity:.7"/><stop offset=".55" style="stop-color:var(--cone);stop-opacity:.35"/>' +
   '<stop offset="1" style="stop-color:var(--cone);stop-opacity:0"/></radialGradient></defs>' +
   '<path d="M60 60 L26.7 12.5 A58 58 0 0 1 93.3 12.5 Z" fill="url(#meCone)"/></svg><div class="me-dot"></div></div>';
-function meIcon() { return L.divIcon({ className: 'me-ico', html: ME_HTML, iconSize: [120, 120], iconAnchor: [60, 60] }); }
+var meSeq = 0;
+function meIcon() { var id = 'meCone' + (++meSeq); return L.divIcon({ className: 'me-ico', html: ME_HTML.replace(/meCone/g, id), iconSize: [120, 120], iconAnchor: [60, 60] }); }
 function makeMe(ll, map) {
   var m = L.marker(ll, { icon: meIcon(), interactive: false, keyboard: false, zIndexOffset: 900 }).addTo(map);
   applyHeadingTo(m);
@@ -1432,16 +1546,18 @@ function loadPath(l, first) {
     if (i >= dirs.length) { if (my === pathSeq) $('mapMeta').textContent = 'Hat güzergâhı alınamadı'; return; }
     var rt = first || !mapLayers.route ? '111000' : '010000';
     api('pathInfo', { displayRouteCode: l.code, direction: dirs[i], resultType: rt }).then(function (r) {
-      if (my !== pathSeq || S.mapLine !== l) return;
+      // Not: durak sorgusu her 5 sn'de hat nesnesini yeniden üretir (S.mapLine değişir); aynı hat mı diye anahtara bak
+      var cur = S.mapLine;
+      if (my !== pathSeq || !cur || cur.key !== l.key) return;
       var p = (r.pathList || [])[0];
       if (!p) return go(i + 1);
       if (rt === '111000' && dirs.length > 1) {
         var has = (p.busStopList || []).some(function (s) { return sid(s) === S.stop.id; });
         if (!has && i + 1 < dirs.length) return go(i + 1);
-        l.pathDir = dirs[i];
+        cur.pathDir = l.pathDir = dirs[i];
       }
       p.__srv = srvTime(r);
-      drawPath(l, p, first);
+      drawPath(cur, p, first);
     }, function () { if (my === pathSeq) { S.pathErr = true; mapStaleCheck(); } });
   }
   go(0);
@@ -1453,6 +1569,7 @@ function drawPath(l, p, fit) {
       .map(function (q) { return [num(q.lat), num(q.lng)]; }).filter(function (q) { return isFinite(q[0]) && isFinite(q[1]); });
     if (mapLayers.route) S.map.removeLayer(mapLayers.route);
     mapLayers.route = L.polyline(pts, { color: col, weight: 5, opacity: .75 }).addTo(S.map);
+    S.route = buildRoute(pts);
     mapLayers.stop.bringToFront();
   }
   if (p.busStopList && p.busStopList.length) {
@@ -1485,10 +1602,10 @@ function drawPath(l, p, fit) {
    İşaretler kalıcı; yeni konuma kayarak gider. */
 function drawBuses(l) {
   var p = S.lastPath; if (!p || !S.map) return null;
-  var col = l.color || '#0A5A73';
+  var col = l.color || '#0A5A73', ink = inkFor(col), now = Date.now();
   if (!mapLayers.buses) { mapLayers.buses = L.layerGroup().addTo(S.map); S.busMk = {}; }
   var seen = {}, nextLL = null, n = 0, live = S.live || {};
-  var nextId = l.buses[0] ? String(l.buses[0].id || l.buses[0].plate) : null;
+  var nb = liveFresh() ? l.buses[0] : null, nextId = nb ? String(nb.id || nb.plate) : null;
   (p.busList || []).forEach(function (b) {
     var la = num(b.lat), lo = num(b.lng); if (!isFinite(la) || !isFinite(lo)) return;
     var pl = String(b.plate || b.plateNumber || ''), key = String(b.busId || pl);
@@ -1496,24 +1613,38 @@ function drawBuses(l) {
     var lv = (b.busId && live['i' + b.busId]) || (pl && live['p' + pl]);
     if (lv && lv.t > (p.__srv || 0)) { la = lv.lat; lo = lv.lng; }
     n++; seen[key] = 1;
-    var isNext = nextId && (String(b.busId || '') === nextId || pl === nextId);
+    var isNext = !!nextId && (String(b.busId || '') === nextId || pl === nextId);
     var tk = S.track[S.stop.id + '|' + (b.busId || b.plate || '')];
-    var frozen = tk && Date.now() - tk.since >= FROZEN_MS;
-    if (isNext) nextLL = [la, lo];
-    var html = '<div class="bus-pin' + (isNext ? ' next' : '') + '" style="background:' + col + ';color:' + inkFor(col) + '">🚌 ' +
-      String(l.code).replace(/[<>&"]/g, '') + '</div>';
+    var frozen = tk && now - tk.since >= FROZEN_MS;
     var m = S.busMk[key];
-    if (!m) {
-      m = S.busMk[key] = L.marker([la, lo], { icon: L.divIcon({ className: 'bus-ico', html: html, iconSize: [0, 0] }) }).addTo(mapLayers.buses);
-      m._html = html;
+    if (!m || m._col !== col) {
+      if (m) mapLayers.buses.removeLayer(m);
+      var sn = snapRoute(la, lo), on = sn && sn.d < 60;
+      m = S.busMk[key] = L.marker(on ? sn.ll : [la, lo], { icon: busIcon(col, ink), keyboard: false, interactive: false }).addTo(mapLayers.buses);
+      m._col = col; m._at = now; m._along = on ? sn.along : null; m._rot = null; m._tgt = [la, lo];
+      setBusDir(m, on ? sn.brg : null);
     } else {
-      if (m._html !== html) { m.setIcon(L.divIcon({ className: 'bus-ico', html: html, iconSize: [0, 0] })); m._html = html; }
-      glide(m, [la, lo], 4000);
+      // süre = iki konum arasındaki gerçek aralık: bir sonraki konum gelene kadar kesintisiz kaysın
+      var ms = Math.max(1500, Math.min(8000, now - (m._at || now)));
+      if (moveBus(m, [la, lo], ms * 0.95)) m._at = now;
     }
-    m.setZIndexOffset(isNext ? 1000 : 0); m.setOpacity(frozen ? 0.35 : 1);
+    var e = busEl(m), ll = m.getLatLng();
+    if (isNext) nextLL = [ll.lat, ll.lng];
+    if (e) {
+      e.classList.toggle('next', isNext && !frozen);
+      e.classList.toggle('frozen', !!frozen);
+      var tag = '';
+      if (isNext && !frozen && isFinite(nb.at)) { var mm = minsTo(nb.at); tag = l.code + ' · ' + (nb.sd === 0 || nb.m <= 0 ? 'şimdi' : (mm <= 0 ? '<1 dk' : mm + ' dk')); }
+      var te = e.querySelector('.bm-tag'); if (te.textContent !== tag) te.textContent = tag;
+    }
+    m.setZIndexOffset(isNext ? 1000 : 0); m.setOpacity(1);
   });
   Object.keys(S.busMk).forEach(function (k) {
-    if (!seen[k]) { var m = S.busMk[k]; if (m._anim) cancelAnimationFrame(m._anim); mapLayers.buses.removeLayer(m); delete S.busMk[k]; }
+    if (seen[k]) return;
+    var m = S.busMk[k], e = busEl(m); delete S.busMk[k];
+    if (m._anim) cancelAnimationFrame(m._anim);
+    if (e) { e.classList.add('out'); setTimeout(function () { if (mapLayers.buses) mapLayers.buses.removeLayer(m); }, 400); }
+    else mapLayers.buses.removeLayer(m);
   });
   $('mapMeta').textContent = n ? n + ' otobüs hatta · ' + clock(new Date()) + ' itibarıyla' : 'Şu an hatta canlı otobüs görünmüyor';
   return nextLL;
@@ -1586,11 +1717,13 @@ function refreshMapCard() {
 /* ---------- döngü ---------- */
 function startTimers() {
   clearInterval(S.timer); clearInterval(S.relocTimer); clearInterval(S.tick);
-  S.tick = setInterval(function () { if (!S.mapLine && S.lines.length) renderList(); else if (S.mapLine) { refreshMapCard(); mapStaleCheck(); } }, 15000);
+  S.tick = setInterval(function () { refreshPlans(); if (!S.mapLine && S.lines.length) renderList(); else if (S.mapLine) { refreshMapCard(); mapStaleCheck(); } }, 15000);
   S.timer = setInterval(function () { if (S.stop && !S.loading) loadArrivals(); }, REFRESH_MS);
   S.relocTimer = setInterval(function () { if (!S.locBlocked) locate(); }, RELOCATE_MS);
 }
-window.__pause = function () { if (!hasBridge) { webHeadingStop(); headingOn = false; } clearInterval(S.tick); clearInterval(S.timer); clearInterval(S.relocTimer); clearInterval(S.mapTimer); };
+window.__pause = function () {
+  if (MEASURE) { clearInterval(MEASURE.t); MEASURE = null; $('diagMeasure').textContent = 'Konumu ölç (2 dk)'; }
+  if (!hasBridge) { webHeadingStop(); headingOn = false; } clearInterval(S.tick); clearInterval(S.timer); clearInterval(S.relocTimer); clearInterval(S.mapTimer); };
 window.__resume = function () {
   if (!hasBridge) setTimeout(function () { syncHeading(); }, 0);
   startTimers();
@@ -1707,3 +1840,7 @@ spin(true);
 })();
 startTimers();
 locate();
+setTimeout(function () {
+  var idle = window.requestIdleCallback || function (f) { return setTimeout(f, 200); };
+  idle(function () { try { ttAllStops(); } catch (e) {} idle(function () { try { searchIndex(); } catch (e) {} }, { timeout: 4000 }); }, { timeout: 4000 });
+}, 2500);

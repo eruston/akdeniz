@@ -100,9 +100,24 @@ h1{margin:4px 0 2px;font-size:23px;line-height:1.2;font-weight:700;letter-spacin
 .map-card .big{white-space:nowrap;flex:none;font-size:30px;font-weight:800;font-variant-numeric:tabular-nums}
 .map-card .txt{font-size:14px;color:var(--muted);line-height:1.4}
 .bus-ico{background:none;border:0}
-.bus-pin{transform:translate(-50%,-50%);display:inline-flex;align-items:center;gap:3px;padding:3px 7px;border-radius:9px;
-  color:#fff;font:800 12px system-ui,sans-serif;white-space:nowrap;border:2px solid #fff;box-shadow:0 1px 4px rgba(0,0,0,.35)}
-.bus-pin.next{outline:3px solid var(--soon)}
+.bm{position:absolute;left:0;top:0;width:0;height:0;animation:bm-in .35s ease-out;transition:opacity .35s,filter .35s}
+.bm-body{position:absolute;left:-16px;top:-16px;width:32px;height:32px;border-radius:50%;background:var(--c);color:var(--ink);
+  display:grid;place-items:center;border:2.5px solid #fff;box-shadow:0 2px 6px rgba(0,0,0,.35);transition:transform .25s}
+.bm-dir{position:absolute;left:-30px;top:-30px;width:60px;height:60px;transition:transform .7s ease-out}
+.bm-dir svg{display:block;filter:drop-shadow(0 1px 1px rgba(0,0,0,.3))}
+.bm.nodir .bm-dir{opacity:0}
+.bm-tag{position:absolute;left:50%;bottom:33px;transform:translateX(-50%);white-space:nowrap;background:var(--c);color:var(--ink);
+  font:800 12px system-ui,sans-serif;padding:3px 8px;border-radius:8px;border:2px solid #fff;box-shadow:0 1px 4px rgba(0,0,0,.3);font-variant-numeric:tabular-nums}
+.bm-tag:empty{display:none}
+.bm.next .bm-body{transform:scale(1.12)}
+.bm-pulse{position:absolute;left:-16px;top:-16px;width:32px;height:32px;border-radius:50%;background:var(--c);opacity:0}
+.bm.next .bm-pulse{animation:bm-pulse 1.8s ease-out infinite}
+.bm.frozen{filter:grayscale(1);opacity:.55}
+.bm.frozen .bm-dir{opacity:0}
+.bm.out{opacity:0;transform:scale(.4);transition:opacity .35s,transform .35s}
+@keyframes bm-in{from{opacity:0;transform:scale(.4)}to{opacity:1;transform:scale(1)}}
+@keyframes bm-pulse{0%{opacity:.45;transform:scale(1)}100%{opacity:0;transform:scale(2.6)}}
+@media (prefers-reduced-motion:reduce){.bm,.bm-dir{animation:none;transition:none}.bm.next .bm-pulse{animation:none}}
 .map-dark .leaflet-tooltip{background:#1C2120;color:#ECEFEE;border-color:#2A302E}
 .map-dark .leaflet-tooltip-top:before{border-top-color:#1C2120}
 .leaflet-container{font:inherit}
@@ -224,3 +239,4 @@ h1{margin:4px 0 2px;font-size:23px;line-height:1.2;font-weight:700;letter-spacin
 :root.dark .res mark{color:#5CC8D6}
 .res .pin svg{width:18px;height:18px}
 .diag-btns{flex-wrap:wrap}
+

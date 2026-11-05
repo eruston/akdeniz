@@ -477,32 +477,27 @@ function loadArrivals() {
     if (S.mapLine) refreshMapCard();
   });
 }
-/* Donmuş otobüs tespiti: sunucu aynı otobüsü 3 dk boyunca aynı yerde, aynı durak farkıyla
-   ve düşmeyen bir süreyle bildiriyorsa (GPS takılmış, otobüs beklemede/seferden çıkmış),
-   bu veri canlı sayılmaz; yerine tarife gösterilir. */
+/* Bekleyen otobüs tespiti: aynı otobüs 3 dk boyunca 80 m'den fazla ilerlemediyse (hat başında/ışıkta bekliyor,
+   GPS takılmış) Kentkart'ın verdiği dakika güvenilmez; geri sayım yerine "bekliyor" + tarife gösterilir.
+   Kontrol otobüse göredir (hangi durağa bakılırsa bakılsın aynı sonuç). Durağında bekleyen otobüs gizlenmez. */
 var FROZEN_MS = 180000;
+function busKey(b) { return 'b|' + (b.id || b.plate || (b.lat + ',' + b.lng)); }
 function trackBus(stopId, b) {
-  var key = stopId + '|' + (b.id || b.plate || (b.lat + ',' + b.lng));
-  var now = Date.now(), t = S.track[key];
-  // Bekleyen otobüste GPS birkaç on metre oynar, süre de 4-5-6 dk arası gidip gelir; bunlar "hareket" sayılmaz.
-  // Gerçekten gelen otobüs 3 dk'da yüzlerce metre ilerler ve süresi en az 2-3 dk düşer.
+  var key = busKey(b), now = Date.now(), t = S.track[key];
   var samePos = t && (!isFinite(b.lat) || !isFinite(t.lat) ? true : dist(t.lat, t.lng, b.lat, b.lng) < 80);
-  var sameSd = t && (t.sd === b.sd || (!isFinite(t.sd) && !isFinite(b.sd)));
-  var notDropping = t && (!isFinite(b.m) || !isFinite(t.m) || b.m >= t.m - 1);
-  if (t && samePos && sameSd && notDropping) {
-    t.seen = now;
-  } else {
-    t = S.track[key] = { lat: b.lat, lng: b.lng, sd: b.sd, m: b.m, since: now, seen: now };
-  }
-  b.still = Math.round((now - t.since) / 1000); // tanılama için: kaç sn'dir aynı durumda
+  if (t && samePos) t.seen = now;
+  else t = S.track[key] = { lat: b.lat, lng: b.lng, since: now, seen: now };
+  b.still = Math.round((now - t.since) / 1000); // tanılama için: kaç sn'dir yerinde
+  if (b.sd === 0) return false; // otobüs bu durakta: binilebilir, gizleme
   return now - t.since >= FROZEN_MS;
 }
 function pruneTrack() {
   var now = Date.now();
   Object.keys(S.track).forEach(function (k) { if (now - S.track[k].seen > 10 * 60000) delete S.track[k]; });
 }
+var GONE = []; // tanılama: listeden düşen otobüsler
 function buildLines(r, stop) {
-  var groups = {}, order = [];
+  var groups = {}, order = [], seenNow = {};
   function key(code, dir) { return norm(code) + '|' + (dir == null ? '' : String(dir)); }
   function add(code, dir, info) {
     if (!code) return null;
@@ -531,7 +526,7 @@ function buildLines(r, stop) {
     var code = b.displayRouteCode || b.routeCode; if (!code) return;
     var m = etaMin(b), sd = int(b.stopDiff);
     if (isFinite(m) === false && !(sd >= 0)) return;
-    if (isFinite(sd) && sd < 0) return;
+    if (isFinite(sd) && sd < 0) { seenNow[String(b.busId || b.plate || '')] = 'geçti'; return; }
     var g = groups[key(code, b.direction)];
     if (!g) {
       // yön bilinmiyorsa aynı hattın ilk grubuna bağla
@@ -542,12 +537,26 @@ function buildLines(r, stop) {
     var bus = { m: m, sd: sd, at: isFinite(m) ? Date.now() + m * 60000 : NaN, lat: num(b.lat), lng: num(b.lng), plate: b.plate || b.plateNumber || '', id: b.busId || b.plate || '' };
     bus.raw = { td: b.timeDiff, sd: b.stopDiff };
     bus.frozen = trackBus(stop.id, bus);
+    seenNow[String(bus.id)] = bus.frozen ? 'bekliyor' : 'var';
     g.buses.push(bus);
   });
   pruneTrack();
+  // önceki cevapta canlı görünen otobüs bu sefer neden yok?
+  if (S.lastStopId === stop.id) S.lines.forEach(function (l) {
+    (l.buses || []).forEach(function (ob) {
+      var st = seenNow[String(ob.id)];
+      if (st === 'var') return;
+      GONE.unshift(clock(new Date()) + ':' + pad(new Date().getSeconds()) + ' ' + l.code + ' ' + (ob.plate || ob.id) + ' · önce ' +
+        (isFinite(ob.m) ? ob.m + ' dk' : '-') + ', ' + (isFinite(ob.sd) ? ob.sd + ' durak önce' : '?') + ' → ' +
+        (st === 'geçti' ? 'sunucu "durağı geçti" dedi (stopDiff<0)' : st === 'bekliyor' ? 'bekliyor sayıldı (3 dk kıpırdamadı)' : 'sunucu listeden çıkardı'));
+    });
+  });
+  if (GONE.length > 12) GONE.length = 12;
+  S.lastStopId = stop.id;
   var out = order.map(function (k) { return groups[k]; });
   out.forEach(function (g) {
     g.frozenCount = g.buses.filter(function (b) { return b.frozen; }).length;
+    g.waiting = g.buses.filter(function (b) { return b.frozen; }).sort(function (a, b) { return (isFinite(a.sd) ? a.sd : 99) - (isFinite(b.sd) ? b.sd : 99); })[0] || null;
     g.allBuses = g.buses.slice();
     g.buses = g.buses.filter(function (b) { return !b.frozen; });
     g.buses.sort(function (a, b) { return (isFinite(a.m) ? a.m : 999) - (isFinite(b.m) ? b.m : 999); });
@@ -711,6 +720,7 @@ function timeLabel(a) {
   if (m >= 60) return { big: clock(new Date(a.at)), unit: '' };
   return { big: String(m), unit: 'dk' };
 }
+function waitText(b) { return 'Otobüs ' + (isFinite(b.sd) && b.sd > 0 ? b.sd + ' durak önce ' : '') + 'bekliyor'; }
 function lineRow(l) {
   var row = el('div', 'row'); row.setAttribute('role', 'button');
   var badge = el('div', 'badge', l.code);
@@ -730,7 +740,7 @@ function lineRow(l) {
     if (b0.sd !== 0 && minsTo(first.at) < 60) bits.push(clock(new Date(first.at)));
     sub.textContent = bits.join(' · ');
   } else if (first) {
-    sub.textContent = l.frozenCount ? 'Konum donuk · tarife' : (minsTo(first.at) < 60 ? 'Tarife · ' + clock(new Date(first.at)) : 'Tarifeye göre');
+    sub.textContent = l.waiting && liveFresh() ? waitText(l.waiting) + ' · tarife' : (minsTo(first.at) < 60 ? 'Tarife · ' + clock(new Date(first.at)) : 'Tarifeye göre');
   } else if (l.plan && l.plan.approx && l.plan.next && l.plan.next.length) {
     sub.textContent = 'Hat başından kalkış ' + l.plan.next.map(sClock).join(' · ');
   } else if (l.offline) {
@@ -739,8 +749,8 @@ function lineRow(l) {
     sub.textContent = 'Canlı veri alınamıyor';
   } else if (!liveFresh()) {
     sub.textContent = 'Güncelleniyor…';
-  } else if (l.frozenCount) {
-    sub.textContent = 'Otobüs konumu güncellenmiyor';
+  } else if (l.waiting) {
+    sub.textContent = waitText(l.waiting);
   } else if (l.plan) {
     sub.textContent = 'Şu an yaklaşan otobüs yok';
   } else {
@@ -1614,7 +1624,7 @@ function drawBuses(l) {
     if (lv && lv.t > (p.__srv || 0)) { la = lv.lat; lo = lv.lng; }
     n++; seen[key] = 1;
     var isNext = !!nextId && (String(b.busId || '') === nextId || pl === nextId);
-    var tk = S.track[S.stop.id + '|' + (b.busId || b.plate || '')];
+    var tk = S.track[busKey({ id: b.busId, plate: b.plate || b.plateNumber, lat: num(b.lat), lng: num(b.lng) })];
     var frozen = tk && now - tk.since >= FROZEN_MS;
     var m = S.busMk[key];
     if (!m || m._col !== col) {
@@ -1760,7 +1770,7 @@ function diagText() {
 }
 /* Durağa gelen otobüsler ve "donmuş" kontrolünün durumu (3 dk aynı durumda kalan otobüs canlı sayılmaz) */
 function stopBusesText() {
-  var out = ['Duraktaki otobüsler · ' + (S.stop ? S.stop.name : '-') + ' (donmuş sayılma eşiği ' + (FROZEN_MS / 1000) + ' sn):'];
+  var out = ['Duraktaki otobüsler · ' + (S.stop ? S.stop.name : '-') + ' (bekliyor sayılma: ' + (FROZEN_MS / 1000) + ' sn yerinde):'];
   var any = false;
   S.lines.forEach(function (l) {
     (l.allBuses || l.buses || []).forEach(function (b) {
@@ -1768,10 +1778,13 @@ function stopBusesText() {
       out.push('  ' + l.code + ' ' + (b.plate || b.id || '?') + ' · ' + (isFinite(b.m) ? b.m + ' dk' : '-') +
         ' (timeDiff=' + (b.raw ? b.raw.td : '?') + ', stopDiff=' + (b.raw ? b.raw.sd : '?') + ')' +
         ' · konum ' + (isFinite(b.lat) ? b.lat.toFixed(5) + ',' + b.lng.toFixed(5) : '-') +
-        ' · ' + (b.still != null ? b.still + ' sn aynı durumda' : '') + (b.frozen ? ' · DONMUŞ (gizlendi)' : ''));
+        ' · ' + (b.still != null ? b.still + ' sn yerinde' : '') + (b.frozen ? ' · BEKLİYOR (geri sayım gizlendi)' : ''));
     });
   });
   if (!any) out.push('  (şu an otobüs yok)');
+  out.push('', 'Listeden düşen otobüsler (son 12):');
+  if (!GONE.length) out.push('  (henüz yok)');
+  GONE.forEach(function (g) { out.push('  ' + g); });
   return out;
 }
 function openDiag() {

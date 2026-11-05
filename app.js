@@ -1094,16 +1094,23 @@ function updateProgress(a) {
   if (!pr || !mapLayers.route) return;
   var on = R && sa != null && a != null && a <= sa + 5;
   if (!on) {
-    if (S.progKey !== 'off') { pr.setLatLngs([]); mapLayers.route.setStyle({ opacity: .75 }); styleRouteStops(null, null); S.progKey = 'off'; }
+    if (S.progKey !== 'off') {
+      pr.setLatLngs([]); if (mapLayers.passed) mapLayers.passed.setLatLngs([]);
+      mapLayers.route.setStyle({ opacity: .75, weight: 5 }); styleRouteStops(null, null); S.progKey = 'off';
+    }
     return;
   }
-  var pts = [routeAt(a).ll];
-  for (var i = 0; i < R.cum.length; i++) if (R.cum[i] > a && R.cum[i] < sa) pts.push(R.pts[i]);
-  pts.push(routeAt(sa).ll);
+  var here = routeAt(a).ll, pts = [here], back = [];
+  for (var i = 0; i < R.cum.length; i++) {
+    if (R.cum[i] > a && R.cum[i] < sa) pts.push(R.pts[i]);
+    else if (R.cum[i] <= a) back.push(R.pts[i]);
+  }
+  pts.push(routeAt(sa).ll); back.push(here);
   pr.setLatLngs(pts);
+  if (mapLayers.passed) mapLayers.passed.setLatLngs(back);
   var key = 'on|' + Math.round(a / 25);
   if (S.progKey !== key) {
-    if (S.progKey === 'off' || S.progKey == null) { mapLayers.route.setStyle({ opacity: .3 }); drawIn(pr); }
+    if (S.progKey === 'off' || S.progKey == null) { mapLayers.route.setStyle({ opacity: DARK ? .7 : .55, weight: 4 }); drawIn(pr); } // durağından sonrası: ince, yarı saydam
     styleRouteStops(a, sa); S.progKey = key;
   }
 }
@@ -1119,8 +1126,13 @@ function drawIn(line) {
 function styleRouteStops(a, sa) {
   (S.routeStops || []).forEach(function (s) {
     var inR = a != null && s.along != null && s.along >= a - 5 && s.along <= sa + 5;
-    if (s.inR === inR) return; s.inR = inR;
-    s.m.setStyle(inR ? { radius: 5.5, weight: 2.5, opacity: 1, fillOpacity: 1 } : (a == null ? { radius: 4, weight: 2, opacity: 1, fillOpacity: 1 } : { radius: 3.5, weight: 1.5, opacity: .5, fillOpacity: .6 }));
+    var st = a == null ? 'n' : inR ? 'r' : (s.along != null && s.along < a - 5 ? 'p' : 'a');
+    if (s.inR === st) return; s.inR = st;
+    var passed = a != null && s.along != null && s.along < a - 5;
+    s.m.setStyle(inR ? { radius: 5.5, weight: 2.5, opacity: 1, fillOpacity: 1, color: s.col }
+      : a == null ? { radius: 4, weight: 2, opacity: 1, fillOpacity: 1, color: s.col }
+      : passed ? { radius: 3.5, weight: 1.5, opacity: 1, fillOpacity: 1, color: DARK ? '#5A6166' : '#A3A9AD' }
+      : { radius: 3.5, weight: 1.5, opacity: .75, fillOpacity: 1, color: s.col });
   });
 }
 function busEl(m) { var e = m.getElement && m.getElement(); return e ? e.firstChild : null; }
@@ -1691,6 +1703,9 @@ function drawPath(l, p, fit) {
     mapLayers.route = L.polyline(pts, { color: col, weight: 5, opacity: .75 }).addTo(S.map);
     S.route = buildRoute(pts);
     if (mapLayers.prog) S.map.removeLayer(mapLayers.prog);
+    if (mapLayers.passed) S.map.removeLayer(mapLayers.passed);
+    // otobüsün geçtiği kısım: gri (gidilmiş yol)
+    mapLayers.passed = L.polyline([], { color: DARK ? '#5A6166' : '#A3A9AD', weight: 6, opacity: 1, lineCap: 'round' }).addTo(S.map);
     // otobüsten durağına kalan yol: parlak ve kalın; açılışta çizilerek belirsin
     mapLayers.prog = L.polyline([], { color: col, weight: 8, opacity: 1, lineCap: 'round', className: 'route-prog' }).addTo(S.map);
     S.progKey = null;
@@ -1705,7 +1720,7 @@ function drawPath(l, p, fit) {
       if (!isFinite(la) || !isFinite(lo) || sid(s) === S.stop.id) return;
       var st = { id: sid(s), name: sname(s) || ('Durak ' + sid(s)), lat: la, lng: lo, routes: '' };
       var dm = L.circleMarker([la, lo], { radius: 4, color: col, weight: 2, fillColor: '#fff', fillOpacity: 1, interactive: false }).addTo(sg);
-      var sq = snapRoute(la, lo); S.routeStops.push({ m: dm, along: sq && sq.d < 120 ? sq.along : null, inR: null });
+      var sq = snapRoute(la, lo); S.routeStops.push({ m: dm, along: sq && sq.d < 120 ? sq.along : null, inR: null, col: col });
       // parmakla kolay basılsın diye görünmez, geniş bir dokunma alanı
       L.circleMarker([la, lo], { radius: 16, stroke: false, fillOpacity: 0 })
         .on('click', function () { selectStopFromMap(st); }).addTo(sg);

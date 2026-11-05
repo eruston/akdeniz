@@ -157,6 +157,8 @@ var DARK = (function () {
 document.documentElement.classList.add(DARK ? 'dark' : 'light');
 
 var REDUCED = !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
+/* Hat rengi: her hat deniz mavisi; karanlık haritada seçilsin diye biraz daha açık ton */
+var LINE_COL = DARK ? '#1F8AA6' : '#0A5A73';
 /* ---------- yardımcılar ---------- */
 function $(id) { return document.getElementById(id); }
 function el(tag, cls, text) { var e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; }
@@ -260,7 +262,7 @@ function ttLinesForStop(stop) {
     if (e[1] === p[3].length - 1) return;
     var key = norm(r[0]) + '|' + p[1];
     if (seen[key]) return; seen[key] = 1;
-    var l = { key: key, code: r[0], dir: String(p[1]), name: nice(r[1]), head: nice(p[2]), color: color(r[2]), buses: [], plan: null, offline: true };
+    var l = { key: key, code: r[0], dir: String(p[1]), name: nice(r[1]), head: nice(p[2]), color: null, buses: [], plan: null, offline: true };
     l.ck = l.code + '|' + l.dir + '|' + stop.id + '|' + todayKey();
     S.sched[l.ck] = ttArrivals(stop.id, l.code, l.dir) || false;
     applyPlan(l);
@@ -512,7 +514,8 @@ function buildLines(r, stop) {
     if (info) {
       g.head = g.head || nice(info.headSign || info.headsign || '');
       g.name = g.name || (info.name || info.routeName || '').trim();
-      g.color = g.color || color(info.routeColor || info.color);
+      // Kentkart renkleri anlamsız (neredeyse hepsi aynı mavi): bütün hatlar uygulamanın deniz mavisi
+      g.color = null;
       g.routeCode = g.routeCode || info.routeCode;
     }
     return g;
@@ -1021,7 +1024,7 @@ function openMap(l) {
   setTimeout(function () { S.map.invalidateSize(); }, 50);
   Object.keys(mapLayers).forEach(function (k) { S.map.removeLayer(mapLayers[k]); });
   mapLayers = {}; S.route = null; S.busMk = {}; S.routeStops = []; S.stopAlong = null; S.progKey = null;
-  mapLayers.stop = L.circleMarker([S.stop.lat, S.stop.lng], { radius: 9, color: '#fff', weight: 3, fillColor: '#0A5A73', fillOpacity: 1 })
+  mapLayers.stop = L.circleMarker([S.stop.lat, S.stop.lng], { radius: 9, color: '#fff', weight: 3, fillColor: DARK ? '#FB923C' : '#C2410C', fillOpacity: 1 })
     .bindTooltip(S.stop.name, { permanent: false }).addTo(S.map);
   updateUserDot();
   refreshMapCard();
@@ -1248,7 +1251,7 @@ function searchIndex() {
       });
       Object.keys(byDir).sort().forEach(function (d) {
         var p = byDir[d].p, r = TT.routes[p[0]];
-        lines.push({ code: r[0], dir: d, head: nice(p[2]), name: nice(r[1]), color: color(r[2]), f: fold(r[0]), fh: fold(p[2]) + ' ' + fold(r[1]) });
+        lines.push({ code: r[0], dir: d, head: nice(p[2]), name: nice(r[1]), color: null, f: fold(r[0]), fh: fold(p[2]) + ' ' + fold(r[1]) });
       });
     });
   }
@@ -1705,7 +1708,7 @@ function loadPath(l, first) {
   go(0);
 }
 function drawPath(l, p, fit) {
-  var col = l.color || '#0A5A73';
+  var col = LINE_COL;
   if (p.pointList && p.pointList.length) {
     var pts = p.pointList.slice().sort(function (a, b) { return int(a.seq) - int(b.seq); })
       .map(function (q) { return [num(q.lat), num(q.lng)]; }).filter(function (q) { return isFinite(q[0]) && isFinite(q[1]); });
@@ -1754,7 +1757,7 @@ function drawPath(l, p, fit) {
    İşaretler kalıcı; yeni konuma kayarak gider. */
 function drawBuses(l) {
   var p = S.lastPath; if (!p || !S.map) return null;
-  var col = l.color || '#0A5A73', ink = inkFor(col), now = Date.now();
+  var col = LINE_COL, ink = '#fff', now = Date.now();
   if (!mapLayers.buses) { mapLayers.buses = L.layerGroup().addTo(S.map); S.busMk = {}; }
   var seen = {}, nextLL = null, n = 0, live = S.live || {}, nextMk = null;
   var nb = liveFresh() ? l.buses[0] : null, nextId = nb ? String(nb.id || nb.plate) : null;

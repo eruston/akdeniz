@@ -526,7 +526,16 @@ function buildLines(r, stop) {
     var code = b.displayRouteCode || b.routeCode; if (!code) return;
     var m = etaMin(b), sd = int(b.stopDiff);
     if (isFinite(m) === false && !(sd >= 0)) return;
-    if (isFinite(sd) && sd < 0) { seenNow[String(b.busId || b.plate || '')] = 'geçti'; return; }
+    if (isFinite(sd) && sd < 0) {
+      // Kentkart bazen otobüsü durağa yanaşmadan "geçti" sayıyor (durak kavşakta, sunucunun noktası geride).
+      // Hâlâ durağa 120 m'den yakınsa ve az önce yaklaşıyor görünüyorsa "Durakta" göster.
+      var bla = num(b.lat), blo = num(b.lng), bid = String(b.busId || b.plate || '');
+      var near = isFinite(bla) && dist(bla, blo, stop.lat, stop.lng) < 120, wasComing = S.lastStopId === stop.id && S.lines.some(function (l) {
+        return (l.buses || []).some(function (ob) { return String(ob.id) === bid && ob.sd <= 1; });
+      });
+      if (!(sd === -1 && near && wasComing)) { seenNow[bid] = 'geçti'; return; }
+      sd = 0; m = 0; b.__early = true;
+    }
     var g = groups[key(code, b.direction)];
     if (!g) {
       // yön bilinmiyorsa aynı hattın ilk grubuna bağla
@@ -536,19 +545,35 @@ function buildLines(r, stop) {
     if (!g.head && b.headSign) g.head = nice(b.headSign);
     var bus = { m: m, sd: sd, at: isFinite(m) ? Date.now() + m * 60000 : NaN, lat: num(b.lat), lng: num(b.lng), plate: b.plate || b.plateNumber || '', id: b.busId || b.plate || '' };
     bus.raw = { td: b.timeDiff, sd: b.stopDiff };
+    if (b.__early) bus.early = 'geçti dedi, durağa ' + Math.round(dist(bus.lat, bus.lng, stop.lat, stop.lng)) + ' m';
     bus.frozen = trackBus(stop.id, bus);
     seenNow[String(bus.id)] = bus.frozen ? 'bekliyor' : 'var';
     g.buses.push(bus);
+  });
+  // 1 durak kala yaklaşırken sunucu listeden çıkardıysa: 60 sn "Durakta" tut (yanaşıyor olabilir)
+  if (S.lastStopId === stop.id) S.lines.forEach(function (l) {
+    (l.buses || []).forEach(function (ob) {
+      if (seenNow[String(ob.id)]) return;
+      var since = ob.ghostSince || Date.now();
+      if (Date.now() - since >= 55000) return; // en geç ~1 dk (bir sonraki yenilemede) düşsün
+      if (!(ob.sd <= 1 && (ob.ghostSince || (isFinite(ob.m) && ob.m <= 3)))) return;
+      var g = groups[l.key] || add(l.code, l.dir, null); if (!g) return;
+      var gb = { m: 0, sd: 0, at: Date.now(), lat: ob.lat, lng: ob.lng, plate: ob.plate, id: ob.id, raw: ob.raw, still: ob.still,
+        ghostSince: since, early: 'sunucu listeden çıkardı, ' + Math.round((Date.now() - since) / 1000) + ' sn "Durakta" tutuluyor' };
+      g.buses.push(gb); seenNow[String(ob.id)] = 'tutuldu';
+    });
   });
   pruneTrack();
   // önceki cevapta canlı görünen otobüs bu sefer neden yok?
   if (S.lastStopId === stop.id) S.lines.forEach(function (l) {
     (l.buses || []).forEach(function (ob) {
       var st = seenNow[String(ob.id)];
-      if (st === 'var') return;
+      if (st === 'var' || (st === 'tutuldu' && ob.ghostSince)) return;
+      if (st === 'tutuldu') st = 'listeden çıktı, 60 sn Durakta tutuluyor';
       GONE.unshift(clock(new Date()) + ':' + pad(new Date().getSeconds()) + ' ' + l.code + ' ' + (ob.plate || ob.id) + ' · önce ' +
         (isFinite(ob.m) ? ob.m + ' dk' : '-') + ', ' + (isFinite(ob.sd) ? ob.sd + ' durak önce' : '?') + ' → ' +
-        (st === 'geçti' ? 'sunucu "durağı geçti" dedi (stopDiff<0)' : st === 'bekliyor' ? 'bekliyor sayıldı (3 dk kıpırdamadı)' : 'sunucu listeden çıkardı'));
+        (st === 'geçti' ? 'sunucu "durağı geçti" dedi (stopDiff<0)' : st === 'bekliyor' ? 'bekliyor sayıldı (3 dk kıpırdamadı)' : st || 'sunucu listeden çıkardı') +
+        (isFinite(ob.lat) ? ' · durağa ' + Math.round(dist(ob.lat, ob.lng, stop.lat, stop.lng)) + ' m' : ''));
     });
   });
   if (GONE.length > 12) GONE.length = 12;
@@ -1778,7 +1803,7 @@ function stopBusesText() {
       out.push('  ' + l.code + ' ' + (b.plate || b.id || '?') + ' · ' + (isFinite(b.m) ? b.m + ' dk' : '-') +
         ' (timeDiff=' + (b.raw ? b.raw.td : '?') + ', stopDiff=' + (b.raw ? b.raw.sd : '?') + ')' +
         ' · konum ' + (isFinite(b.lat) ? b.lat.toFixed(5) + ',' + b.lng.toFixed(5) : '-') +
-        ' · ' + (b.still != null ? b.still + ' sn yerinde' : '') + (b.frozen ? ' · BEKLİYOR (geri sayım gizlendi)' : ''));
+        ' · ' + (b.still != null ? b.still + ' sn yerinde' : '') + (b.frozen ? ' · BEKLİYOR (geri sayım gizlendi)' : '') + (b.early ? ' · ' + b.early : ''));
     });
   });
   if (!any) out.push('  (şu an otobüs yok)');

@@ -450,14 +450,17 @@ var FROZEN_MS = 180000;
 function trackBus(stopId, b) {
   var key = stopId + '|' + (b.id || b.plate || (b.lat + ',' + b.lng));
   var now = Date.now(), t = S.track[key];
-  var samePos = t && (!isFinite(b.lat) || !isFinite(t.lat) ? true : dist(t.lat, t.lng, b.lat, b.lng) < 40);
+  // Bekleyen otobüste GPS birkaç on metre oynar, süre de 4-5-6 dk arası gidip gelir; bunlar "hareket" sayılmaz.
+  // Gerçekten gelen otobüs 3 dk'da yüzlerce metre ilerler ve süresi en az 2-3 dk düşer.
+  var samePos = t && (!isFinite(b.lat) || !isFinite(t.lat) ? true : dist(t.lat, t.lng, b.lat, b.lng) < 80);
   var sameSd = t && (t.sd === b.sd || (!isFinite(t.sd) && !isFinite(b.sd)));
-  var notDropping = t && (!isFinite(b.m) || !isFinite(t.m) || b.m >= t.m);
+  var notDropping = t && (!isFinite(b.m) || !isFinite(t.m) || b.m >= t.m - 1);
   if (t && samePos && sameSd && notDropping) {
     t.seen = now;
   } else {
     t = S.track[key] = { lat: b.lat, lng: b.lng, sd: b.sd, m: b.m, since: now, seen: now };
   }
+  b.still = Math.round((now - t.since) / 1000); // tanılama için: kaç sn'dir aynı durumda
   return now - t.since >= FROZEN_MS;
 }
 function pruneTrack() {
@@ -503,6 +506,7 @@ function buildLines(r, stop) {
     if (!g) g = add(code, b.direction, b);
     if (!g.head && b.headSign) g.head = nice(b.headSign);
     var bus = { m: m, sd: sd, at: isFinite(m) ? Date.now() + m * 60000 : NaN, lat: num(b.lat), lng: num(b.lng), plate: b.plate || b.plateNumber || '', id: b.busId || b.plate || '' };
+    bus.raw = { td: b.timeDiff, sd: b.stopDiff };
     bus.frozen = trackBus(stop.id, bus);
     g.buses.push(bus);
   });
@@ -510,6 +514,7 @@ function buildLines(r, stop) {
   var out = order.map(function (k) { return groups[k]; });
   out.forEach(function (g) {
     g.frozenCount = g.buses.filter(function (b) { return b.frozen; }).length;
+    g.allBuses = g.buses.slice();
     g.buses = g.buses.filter(function (b) { return !b.frozen; });
     g.buses.sort(function (a, b) { return (isFinite(a.m) ? a.m : 999) - (isFinite(b.m) ? b.m : 999); });
     var old = S.lines.filter(function (o) { return o.key === g.key; })[0];
@@ -1618,7 +1623,23 @@ function diagText() {
     if (d.raw) lines.push('     ham: ' + d.raw.replace(/\s+/g, ' '));
   });
   if (!DIAG.length) lines.push('Henüz istek yok.');
-  return busSummary().concat([''], lines).join('\n');
+  return stopBusesText().concat([''], busSummary(), [''], lines).join('\n');
+}
+/* Durağa gelen otobüsler ve "donmuş" kontrolünün durumu (3 dk aynı durumda kalan otobüs canlı sayılmaz) */
+function stopBusesText() {
+  var out = ['Duraktaki otobüsler · ' + (S.stop ? S.stop.name : '-') + ' (donmuş sayılma eşiği ' + (FROZEN_MS / 1000) + ' sn):'];
+  var any = false;
+  S.lines.forEach(function (l) {
+    (l.allBuses || l.buses || []).forEach(function (b) {
+      any = true;
+      out.push('  ' + l.code + ' ' + (b.plate || b.id || '?') + ' · ' + (isFinite(b.m) ? b.m + ' dk' : '-') +
+        ' (timeDiff=' + (b.raw ? b.raw.td : '?') + ', stopDiff=' + (b.raw ? b.raw.sd : '?') + ')' +
+        ' · konum ' + (isFinite(b.lat) ? b.lat.toFixed(5) + ',' + b.lng.toFixed(5) : '-') +
+        ' · ' + (b.still != null ? b.still + ' sn aynı durumda' : '') + (b.frozen ? ' · DONMUŞ (gizlendi)' : ''));
+    });
+  });
+  if (!any) out.push('  (şu an otobüs yok)');
+  return out;
 }
 function openDiag() {
   var o = $('diag'); o.hidden = false;

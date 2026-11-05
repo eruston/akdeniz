@@ -1141,7 +1141,7 @@ function styleRouteStops(a, sa) {
     var passed = a != null && s.along != null && s.along < a - 5;
     s.m.setStyle(inR ? { radius: 5.5, weight: 2.5, opacity: 1, fillOpacity: 1, color: s.col }
       : a == null ? { radius: 4, weight: 2, opacity: 1, fillOpacity: 1, color: s.col }
-      : passed ? { radius: 3.5, weight: 1.5, opacity: 1, fillOpacity: 1, color: DARK ? '#5A6166' : '#A3A9AD' }
+      : passed ? { radius: 3.5, weight: 1.5, opacity: .8, fillOpacity: 1, color: s.col }
       : { radius: 3.5, weight: 1.5, opacity: .75, fillOpacity: 1, color: s.col });
   });
 }
@@ -1714,8 +1714,8 @@ function drawPath(l, p, fit) {
     S.route = buildRoute(pts);
     if (mapLayers.prog) S.map.removeLayer(mapLayers.prog);
     if (mapLayers.passed) S.map.removeLayer(mapLayers.passed);
-    // otobüsün geçtiği kısım: gri (gidilmiş yol)
-    mapLayers.passed = L.polyline([], { color: DARK ? '#5A6166' : '#A3A9AD', weight: 6, opacity: 1, lineCap: 'round' }).addTo(S.map);
+    // otobüsün geçtiği kısım: hat renginde noktalı çizgi (gri haritada kaybolmasın)
+    mapLayers.passed = L.polyline([], { color: col, weight: 5, opacity: 1, dashArray: '1 10', lineCap: 'round' }).addTo(S.map);
     // otobüsten durağına kalan yol: parlak ve kalın; açılışta çizilerek belirsin
     mapLayers.prog = L.polyline([], { color: col, weight: 8, opacity: 1, lineCap: 'round', className: 'route-prog' }).addTo(S.map);
     S.progKey = null;

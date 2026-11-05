@@ -1005,6 +1005,16 @@ function openMap(l) {
   $('mapMeta').textContent = 'Canlı konum yükleniyor…';
   if (!S.map) {
     S.map = makeMap('map', [S.stop.lat, S.stop.lng], 15);
+    // Yakınlaştırma/kıstırma sürerken çizgiler CSS ile ölçekleniyor; bu arada yeniden çizmek çizgiyi kaydırır.
+    // Yakınlaştırma bitince ilerleme çizgisini bir kez güncelle.
+    S.map.on('zoomstart', function () { S.mapZooming = true; });
+    S.map.on('zoomend moveend', function () {
+      if (!S.mapZooming) return;
+      S.mapZooming = false;
+      var nm = null; Object.keys(S.busMk || {}).forEach(function (k) { if (S.busMk[k]._isNext) nm = S.busMk[k]; });
+      S.progKey = S.progKey === 'off' ? 'off' : 'redo';
+      updateProgress(nm ? nm._along : null);
+    });
   } else {
     S.map.setView([S.stop.lat, S.stop.lng], 15);
   }
@@ -1091,7 +1101,7 @@ function busIcon(col, ink) {
    aradaki duraklar belirgin, geçilmiş ve sonraki duraklar küçük. Otobüs kaydıkça çizgi de kısalır. */
 function updateProgress(a) {
   var R = S.route, sa = S.stopAlong, pr = mapLayers.prog;
-  if (!pr || !mapLayers.route) return;
+  if (!pr || !mapLayers.route || S.mapZooming) return;
   var on = R && sa != null && a != null && a <= sa + 5;
   if (!on) {
     if (S.progKey !== 'off') {

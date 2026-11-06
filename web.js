@@ -16,19 +16,14 @@
     });
   } catch (e) {}
 
-  // Ziyaret sayacı (yalnız yayındaki sitede): hits.konst.fish — hesapsız, sadece sayı tutar.
-  // "cihaz": her telefon ilk girişinde bir kez; "acilis": her açılışta. Sayılar sayac.html'de.
+  // Ziyaret sayacı (yalnız yayındaki sitede): GoatCounter — çerezsiz, kişiyi takip etmez; istatistikler antalya.goatcounter.com'da.
   if (location.hostname === 'eruston.github.io') {
-    var HIT = 'https://hits.konst.fish/api/count/incr/badge.svg?url=';
-    var hit = function (key, done) {
-      var im = new Image();
-      if (done) im.onload = done;
-      im.src = HIT + encodeURIComponent('https://eruston.github.io/akdeniz/' + key) + '&t=' + Date.now();
-    };
-    try {
-      if (!localStorage.getItem('akdeniz-sayildi')) hit('cihaz', function () { try { localStorage.setItem('akdeniz-sayildi', String(Date.now())); } catch (e) {} });
-    } catch (e) {}
-    hit('acilis');
+    try { localStorage.removeItem('akdeniz-sayildi'); } catch (e) {} // eski sayacın işareti
+    var gc = document.createElement('script');
+    gc.async = true;
+    gc.src = 'https://gc.zgo.at/count.js';
+    gc.setAttribute('data-goatcounter', 'https://antalya.goatcounter.com/count');
+    document.head.appendChild(gc);
   }
 
   // Çevrimdışı açılış için uygulama kabuğunu önbelleğe al
